@@ -1376,6 +1376,241 @@ function showPriceSheetGuide() {
   `);
 }
 
+
+// ══════════════════════════════════════════════════
+// 체결 문자 파싱 & 거래 기록
+// ══════════════════════════════════════════════════
+
+// 증권사별 계좌번호 매핑 기억 (로컬 저장)
+function loadSmsAcctMap() {
+  try { return JSON.parse(localStorage.getItem('smsAcctMap') || '{}'); }
+  catch(e) { return {}; }
+}
+function saveSmsAcctMap(map) {
+  localStorage.setItem('smsAcctMap', JSON.stringify(map));
+}
+
+// 체결 문자 파싱
+function parseSmsText(text) {
+  const results = [];
+  // 여러 건 붙여넣기 대응 — 증권사 헤더로 분리
+  const blocks = text.split(/(?=\[메리츠증권\]|\[미래에셋증권\]|\[키움증권)/);
+
+  blocks.forEach(block => {
+    if (!block.trim()) return;
+    const r = parseSingleSms(block.trim());
+    if (r) results.push(r);
+  });
+  return results;
+}
+
+function parseSingleSms(text) {
+  const result = {
+    broker: '', name: '', ticker: '', type: '',
+    qty: 0, price: 0, amount: 0, currency: 'KRW',
+    acctNo: '', date: tod()
+  };
+
+  // 증권사 판별
+  if (text.includes('메리츠증권')) result.broker = '메리츠';
+  else if (text.includes('미래에셋증권')) result.broker = '미래에셋';
+  else if (text.includes('키움증권')) result.broker = '키움';
+  else return null;
+
+  // 종목명 파싱
+  const nameMatch = text.match(/종목명\s*[:：]\s*(.+)/);
+  if (nameMatch) {
+    let name = nameMatch[1].trim();
+    // 미래에셋: 종목명(A코드) 형식에서 코드 분리
+    const codeMatch = name.match(/(.+?)\(A(\d{6})\)/);
+    if (codeMatch) {
+      result.name = codeMatch[1].trim();
+      result.ticker = codeMatch[2];
+    } else {
+      // 키움: 종목명(TICKER) 형식
+      const tickerMatch = name.match(/(.+?)\(([A-Z0-9]+)\)\s*$/);
+      if (tickerMatch) {
+        result.name = tickerMatch[1].trim();
+        result.ticker = tickerMatch[2];
+      } else {
+        result.name = name;
+      }
+    }
+    // 해외 종목 괄호 안 티커 추출 (메리츠: 종목명(SOXL))
+    if (!result.ticker) {
+      const m = result.name.match(/\(([A-Z]{2,6})\)\s*$/);
+      if (m) { result.ticker = m[1]; result.name = result.name.replace(/\([A-Z]{2,6}\)\s*$/, '').trim(); }
+    }
+  }
+
+  // 키움 ▶종목명 형식
+  const kiwoNameMatch = text.match(/▶종목명\s*[:：]?\s*(.+)/);
+  if (kiwoNameMatch && !result.name) {
+    let name = kiwoNameMatch[1].trim();
+    const m = name.match(/\(([A-Z]{2,6})\)\s*$/);
+    if (m) { result.ticker = m[1]; result.name = name.replace(/\([A-Z]{2,6}\)\s*$/, '').trim(); }
+    else result.name = name;
+  }
+
+  // 매매구분 파싱
+  const typeMatch = text.match(/매매구분\s*[:：]\s*(매수|매도)/);
+  const sellMatch = text.match(/▶매도수량/);
+  if (typeMatch) result.type = typeMatch[1];
+  else if (sellMatch) result.type = '매도';
+  else if (text.includes('매수')) result.type = '매수';
+  else if (text.includes('매도')) result.type = '매도';
+
+  // 체결수량
+  const qtyMatch = text.match(/체결수량\s*[:：]\s*([\d,]+)\s*주/) ||
+                   text.match(/▶매도수량\s*[:：]?\s*([\d,]+)\s*주/) ||
+                   text.match(/주문수량\s*[:：]\s*([\d,]+)\s*주/);
+  if (qtyMatch) result.qty = parseInt(qtyMatch[1].replace(/,/g, ''));
+
+  // 체결단가
+  const priceMatch = text.match(/체결단가\s*[:：]\s*(USD\s*)?([\d,\.]+)/);
+  if (priceMatch) {
+    result.currency = priceMatch[1]?.trim() === 'USD' ? 'USD' : 'KRW';
+    result.price = parseFloat(priceMatch[2].replace(/,/g, ''));
+  }
+  const kiwoPrice = text.match(/▶체결단가\s*[:：]?\s*(USD\s*)?([\d,\.]+)/);
+  if (kiwoPrice) {
+    result.currency = kiwoPrice[1]?.trim() === 'USD' ? 'USD' : 'KRW';
+    result.price = parseFloat(kiwoPrice[2].replace(/,/g, ''));
+  }
+
+  // 체결금액
+  const amtMatch = text.match(/체결금액\s*[:：]\s*(?:USD\s*)?([\d,\.]+)/);
+  if (amtMatch) {
+    const raw = parseFloat(amtMatch[1].replace(/,/g, ''));
+    result.amount = result.currency === 'USD' ? Math.round(raw * 1484) : raw;
+  } else {
+    result.amount = result.currency === 'USD'
+      ? Math.round(result.price * result.qty * 1484)
+      : result.price * result.qty;
+  }
+
+  // 계좌번호 (일부)
+  const acctMatch = text.match(/계좌번호\s*[:：]\s*([\d\-\*]+)/);
+  if (acctMatch) result.acctNo = acctMatch[1].trim();
+
+  // 체결일자
+  const dateMatch = text.match(/체결일자\s*[:：]\s*(\d{2})\/(\d{2})/);
+  if (dateMatch) {
+    const year = new Date().getFullYear();
+    result.date = `${year}-${dateMatch[1].padStart(2,'0')}-${dateMatch[2].padStart(2,'0')}`;
+  }
+
+  if (!result.name || !result.type) return null;
+  return result;
+}
+
+// 체결 문자 입력 모달
+function showSmsModal() {
+  openModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">📱 체결 문자 붙여넣기</div>
+    <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.6">
+      카카오톡·문자에서 체결 알림을 복사 후 붙여넣기<br>
+      여러 건 한번에 붙여넣기 가능 · 키움/미래에셋/메리츠 지원
+    </div>
+    <div class="form-row">
+      <div class="form-lbl">체결 문자 내용</div>
+      <textarea class="fi" id="sms-input" rows="8" placeholder="[메리츠증권] 해외주식 주문체결 안내&#10;종목명: ...&#10;&#10;여러 건 한번에 붙여넣기 가능" style="resize:vertical;font-size:12px;line-height:1.6"></textarea>
+    </div>
+    <button class="btn btn-p" onclick="parseSmsAndShow()">파싱 →</button>
+    <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">취소</button>
+  `);
+}
+
+async function parseSmsAndShow() {
+  const text = document.getElementById('sms-input').value.trim();
+  if (!text) { toast('문자 내용을 붙여넣어 주세요'); return; }
+
+  const parsed = parseSmsText(text);
+  if (!parsed.length) { toast('파싱 실패 — 지원하는 형식인지 확인해주세요'); return; }
+
+  const acctMap = loadSmsAcctMap();
+
+  // 계좌 옵션 HTML
+  const acctOptions = DB.accounts.map(a =>
+    `<option value="${a.id}">${a.name} (${a.broker})</option>`
+  ).join('');
+
+  let rowsHTML = parsed.map((r, i) => {
+    // 이전에 기억된 계좌 찾기
+    const mapKey = r.broker + '_' + r.acctNo;
+    const savedAcctId = acctMap[mapKey] || '';
+    const defaultAcct = savedAcctId || DB.accounts.find(a => a.broker === r.broker)?.id || '';
+
+    return `
+    <div style="background:var(--bg3);border-radius:8px;padding:12px;margin-bottom:8px" id="sms-row-${i}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+        <div>
+          <div style="font-size:13px;font-weight:600">${r.name} ${r.ticker ? '<span style="font-size:10px;color:var(--text3)">'+r.ticker+'</span>' : ''}</div>
+          <div style="font-size:10px;color:var(--text2);margin-top:2px">${r.date} · ${r.broker} · ${r.acctNo}</div>
+        </div>
+        <div style="text-align:right">
+          <span class="badge ${r.type==='매수'?'badge-green':'badge-red'}">${r.type}</span>
+          <div style="font-family:var(--mono);font-size:12px;margin-top:4px">${r.qty}주 · ${fmt(r.amount)}원</div>
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <div class="form-lbl">계좌 선택 ${savedAcctId?'<span style="color:var(--accent3)">✓ 기억됨</span>':''}</div>
+        <select class="fsel" id="sms-acct-${i}" style="font-size:12px">
+          <option value="">계좌 선택</option>
+          ${DB.accounts.map(a=>`<option value="${a.id}" ${a.id===defaultAcct?'selected':''}>${a.name}</option>`).join('')}
+        </select>
+      </div>
+    </div>`;
+  }).join('');
+
+  openModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">파싱 결과 확인 (${parsed.length}건)</div>
+    <div id="sms-rows">${rowsHTML}</div>
+    <button class="btn btn-p" onclick="saveSmsRecords(${JSON.stringify(parsed).replace(/"/g,'&quot;')})">전체 저장</button>
+    <button class="btn btn-s" style="margin-top:8px" onclick="showSmsModal()">← 다시 입력</button>
+    <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">취소</button>
+  `);
+}
+
+function saveSmsRecords(parsed) {
+  const acctMap = loadSmsAcctMap();
+  let saved = 0;
+
+  parsed.forEach((r, i) => {
+    const acctId = document.getElementById('sms-acct-' + i)?.value;
+    if (!acctId) return;
+
+    // 계좌 매핑 기억
+    const mapKey = r.broker + '_' + r.acctNo;
+    acctMap[mapKey] = acctId;
+
+    const acct = DB.accounts.find(a => a.id === acctId);
+    DB.trades.push({
+      id: 't' + Date.now() + i,
+      date: r.date,
+      owner: acct?.owner || '',
+      broker: r.broker,
+      type: r.type,
+      name: r.name,
+      ticker: r.ticker,
+      qty: r.qty,
+      price: r.price,
+      amount: r.amount,
+      currency: r.currency,
+      memo: '체결문자 자동입력'
+    });
+    saved++;
+  });
+
+  saveSmsAcctMap(acctMap);
+  saveDB(DB);
+  closeModal();
+  renderLog();
+  toast(`✓ ${saved}건 거래 기록 저장됨`);
+}
+
 // INIT
 renderDashboard();
 updateTopbar();

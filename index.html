@@ -72,9 +72,10 @@
         <div class="stat-card"><div class="sc-lbl">이번달 매수</div><div class="sc-val" id="lg-buy">—</div></div>
         <div class="stat-card"><div class="sc-lbl">이번달 매도</div><div class="sc-val" id="lg-sell">—</div></div>
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0">
-        <div class="chips" style="margin:0;flex:1" id="log-filter-chips"></div>
-        <button class="btn-sm" style="flex-shrink:0;margin-left:6px" onclick="showTradeModal()">＋ 기록</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;gap:6px">
+        <div class="chips" style="margin:0;flex:1;overflow-x:auto" id="log-filter-chips"></div>
+        <button class="btn-sm" style="flex-shrink:0;white-space:nowrap" onclick="showSmsModal()">📱 문자</button>
+        <button class="btn-sm" style="flex-shrink:0" onclick="showTradeModal()">＋ 기록</button>
       </div>
       <div class="card card-blue" style="margin-bottom:10px">
         <div style="font-size:12px;color:var(--accent2);font-weight:500;margin-bottom:5px">📲 간편 입력 방법</div>
