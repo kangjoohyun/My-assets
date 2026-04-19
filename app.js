@@ -253,12 +253,12 @@ function renderAcctList() {
       a.holdings.forEach(h2 => {
         const hv = hval(h2);
         const ret = h2.avgPrice>0 && h2.ticker!=='CASH' ? (h2.curPrice-h2.avgPrice)/h2.avgPrice*100 : null;
-        d += `<div class="drag-item" data-id="${h2.id}" data-acct="${a.id}" data-type="holding" style="display:grid;grid-template-columns:auto 1fr auto auto;border-bottom:1px solid var(--border);align-items:center">
-          <div class="drag-handle" style="padding:0 10px;color:var(--text3);font-size:16px;cursor:grab;touch-action:none">⠿</div>
-          <div onclick="showHoldingModal('${a.id}','${h2.id}')" style="display:grid;grid-template-columns:1fr auto auto;padding:11px 0;gap:8px;align-items:center">
-            <div><div class="tbl-nm">${h2.name}</div><div class="tbl-sub">${h2.category} · ${h2.qty.toLocaleString()}주</div></div>
-            <div class="tbl-val">${fmtW(hv)}</div>
-            <div class="tbl-pct ${ret!==null ? pctCls(ret) : 'neu'}">${ret!==null ? fmtPct(ret) : ''}</div>
+        d += `<div class="drag-item" data-id="${h2.id}" data-acct="${a.id}" data-type="holding" style="display:flex;align-items:center;border-bottom:1px solid var(--border);padding:0 8px 0 0">
+          <div class="drag-handle" style="padding:0 10px;color:var(--text3);font-size:16px;cursor:grab;touch-action:none;flex-shrink:0">⠿</div>
+          <div onclick="showHoldingModal('${a.id}','${h2.id}')" style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;flex:1;gap:8px;cursor:pointer">
+            <div style="flex:1;min-width:0"><div class="tbl-nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h2.name}</div><div class="tbl-sub">${h2.category} · ${h2.qty.toLocaleString()}주</div></div>
+            <div class="tbl-val" style="flex-shrink:0">${fmtW(hv)}</div>
+            <div class="tbl-pct ${ret!==null ? pctCls(ret) : 'neu'}" style="flex-shrink:0;min-width:44px;text-align:right">${ret!==null ? fmtPct(ret) : ''}</div>
           </div>
         </div>`;
       });
@@ -1019,6 +1019,151 @@ function saveTargets() {
 function openModal(html) { document.getElementById('modal-box').innerHTML=html; document.getElementById('modal-overlay').classList.add('show'); document.getElementById('modal-box').scrollTop=0; }
 function closeModal(e) { if(e&&e.target!==document.getElementById('modal-overlay'))return; document.getElementById('modal-overlay').classList.remove('show'); }
 function toast(msg) { const el=document.getElementById('toast'); el.textContent=msg; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),2200); }
+
+
+// ══════════════════════════════════════════════════
+// 현재가 자동 업데이트 (구글 시트 GOOGLEFINANCE 활용)
+// ══════════════════════════════════════════════════
+
+const PRICE_SHEET = '현재가';
+
+// 앱의 모든 티커를 구글 시트 '현재가' 탭에 자동 기록
+async function exportTickersToSheet() {
+  if (!isGConnected() || !loadGConfig().sheetId) {
+    toast('구글 시트 연결 필요');
+    return false;
+  }
+
+  // 모든 종목 티커 수집 (중복 제거, CASH 제외)
+  const tickerMap = {};
+  DB.accounts.forEach(a => {
+    a.holdings.forEach(h => {
+      if (h.ticker && h.ticker !== 'CASH' && !tickerMap[h.ticker]) {
+        tickerMap[h.ticker] = { name: h.name, ticker: h.ticker };
+      }
+    });
+  });
+
+  const tickers = Object.values(tickerMap);
+  if (!tickers.length) { toast('티커가 없습니다'); return false; }
+
+  // 시트 생성 확인
+  try {
+    const id = loadGConfig().sheetId;
+    const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}`, {
+      headers: { Authorization: 'Bearer ' + getToken() }
+    });
+    const meta = await r.json();
+    const exists = meta.sheets?.some(s => s.properties.title === PRICE_SHEET);
+    if (!exists) {
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}:batchUpdate`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests: [{ addSheet: { properties: { title: PRICE_SHEET } } }] })
+      });
+    }
+  } catch(e) {}
+
+  // 헤더 + 티커 + GOOGLEFINANCE 수식 기록
+  const rows = [
+    ['티커', '현재가(원)', '종목명', '업데이트시간'],
+    ...tickers.map(t => {
+      // 국내 ETF: 6자리 숫자 → KRX:티커
+      // 해외 ETF: 그대로 사용
+      const isKorean = /^\d{6}$/.test(t.ticker);
+      const gfTicker = isKorean ? `KRX:${t.ticker}` : t.ticker;
+      // 국내는 원화 그대로, 해외는 USD→KRW 환산 (1484 기준)
+      const priceFormula = isKorean
+        ? `=IFERROR(GOOGLEFINANCE("${gfTicker}","price"),"")`
+        : `=IFERROR(ROUND(GOOGLEFINANCE("${gfTicker}","price")*GOOGLEFINANCE("CURRENCY:USDKRW"),0),"")`;
+      return [t.ticker, priceFormula, t.name, `=NOW()`];
+    })
+  ];
+
+  const ok = await sheetsPut(`${PRICE_SHEET}!A1`, rows);
+  return ok;
+}
+
+// 구글 시트 '현재가' 탭에서 현재가 읽어서 앱에 반영
+async function importPricesFromSheet() {
+  if (!isGConnected() || !loadGConfig().sheetId) {
+    toast('구글 시트 연결 필요');
+    return;
+  }
+
+  toast('현재가 불러오는 중...');
+
+  try {
+    // 먼저 티커 내보내기 (시트에 없는 경우 대비)
+    await exportTickersToSheet();
+
+    // 잠시 대기 (GOOGLEFINANCE 계산 시간)
+    await new Promise(r => setTimeout(r, 2000));
+
+    // 현재가 읽기
+    const values = await sheetsGet(`${PRICE_SHEET}!A2:C100`);
+    if (!values || !values.length) {
+      toast('현재가 데이터 없음 — 잠시 후 다시 시도');
+      return;
+    }
+
+    // 티커 → 현재가 맵
+    const priceMap = {};
+    values.forEach(row => {
+      if (row[0] && row[1]) {
+        const price = parseFloat(row[1]);
+        if (!isNaN(price) && price > 0) priceMap[row[0]] = price;
+      }
+    });
+
+    if (!Object.keys(priceMap).length) {
+      toast('⚠️ 현재가 조회 실패 — 구글 시트에서 수식 확인 필요');
+      showPriceSheetGuide();
+      return;
+    }
+
+    // 앱 데이터 업데이트
+    let updated = 0;
+    DB.accounts.forEach(a => {
+      a.holdings.forEach(h => {
+        if (h.ticker && h.ticker !== 'CASH' && priceMap[h.ticker]) {
+          h.curPrice = priceMap[h.ticker];
+          updated++;
+        }
+      });
+    });
+
+    saveDB(DB);
+    renderDashboard();
+    toast(`✓ ${updated}개 종목 현재가 업데이트됨`);
+
+  } catch(e) {
+    toast('오류: ' + e.message);
+  }
+}
+
+// 구글 시트 현재가 탭 안내 모달
+function showPriceSheetGuide() {
+  openModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">현재가 시트 확인 필요</div>
+    <div style="font-size:12px;color:var(--text2);line-height:1.8;margin-bottom:12px">
+      구글 시트 <b style="color:var(--accent)">'현재가'</b> 탭의 B열 수식이 아직 계산 중이거나 오류일 수 있습니다.<br><br>
+      <b style="color:var(--text)">확인 방법:</b><br>
+      1. 구글 시트 열기<br>
+      2. <b>'현재가'</b> 탭 클릭<br>
+      3. B열에 숫자가 표시되는지 확인<br>
+      4. 숫자가 보이면 앱에서 다시 시도
+    </div>
+    <div style="background:var(--bg3);border-radius:8px;padding:10px;font-size:11px;color:var(--text3);margin-bottom:12px">
+      국내 ETF 예시: <span style="color:var(--accent2)">KRX:069500</span><br>
+      해외 ETF 예시: <span style="color:var(--accent2)">QLD, QQQM, SPYM</span><br>
+      환율 자동 적용: USD → KRW 실시간 환산
+    </div>
+    <button class="btn btn-p" onclick="importPricesFromSheet();closeModal()">다시 시도</button>
+    <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">닫기</button>
+  `);
+}
 
 // INIT
 renderDashboard();
