@@ -1177,14 +1177,15 @@ function showBackupModal() {
   const cfg = loadGConfig();
   openModal(`
     <div class="modal-handle"></div>
-    <div class="modal-title">구글 시트 백업 설정</div>
+    <div class="modal-title">☁ 구글 시트 동기화</div>
 
     <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
         <span style="font-size:12px">연결 상태</span>
         <span id="backup-status" style="font-size:12px;font-family:var(--mono)">${isGConnected()?'✓ 연결됨':'미연결'}</span>
       </div>
-      <div style="font-size:10px;color:var(--text3);margin-top:3px" id="last-backup">마지막 백업: ${localStorage.getItem('lastBackup')||'없음'}</div>
+      <div style="font-size:10px;color:var(--text3)" id="last-backup">마지막 백업: ${localStorage.getItem('lastBackup')||'없음'}</div>
+      <div style="font-size:10px;color:var(--accent2);margin-top:4px">앱 시작 시 자동으로 최신 데이터 로드 · 변경 후 30초 자동 저장</div>
     </div>
 
     <div class="form-row">
@@ -1212,29 +1213,90 @@ function showBackupModal() {
       <button class="btn btn-p" id="backup-btn" onclick="backupToSheets()" ${isGConnected()?'':'disabled'}>
         지금 백업하기
       </button>
-      <button class="btn btn-s" id="restore-btn" onclick="restoreFromSheets()" ${isGConnected()?'':'disabled'}
+      <button class="btn btn-s" id="restore-btn" onclick="autoLoadFromSheets().then(()=>closeModal())" ${isGConnected()?'':'disabled'}
+        style="border-color:rgba(74,158,255,.3);color:var(--accent2)">
+        ↓ 지금 최신 데이터 가져오기
+      </button>
+      <button class="btn btn-s" onclick="restoreFromSheets()" ${isGConnected()?'':'disabled'}
         style="border-color:rgba(155,127,232,.3);color:var(--purple)">
-        구글 시트에서 복원
+        구글 시트에서 강제 복원
       </button>
     </div>
 
     <div style="font-size:10px;color:var(--text3);margin-top:14px;line-height:1.7">
       ※ 백업 데이터는 구글 시트 <b style="color:var(--text)">'앱백업'</b> 탭에 저장됩니다<br>
       ※ Client ID는 기존에 발급받은 것 그대로 사용 가능<br>
-      ※ 자동 백업: 데이터 변경 30초 후 자동 저장
+      ※ 자동 저장: 데이터 변경 30초 후 자동 백업<br>
+      ※ 자동 로드: 앱 시작 시 구글 시트가 더 최신이면 자동 적용
     </div>
     <button class="btn btn-s" style="margin-top:10px" onclick="closeModal()">닫기</button>
   `);
 }
 
-// ── 초기화 시 구글 토큰 복원 ──────────────────────
-(function initBackup() {
+// ── 초기화 시 구글 토큰 복원 + 자동 로드 ──────────
+async function initBackup() {
   const storedToken = sessionStorage.getItem('gToken');
   if (storedToken) gToken = storedToken;
-  // 자동 백업 설정 반영
+
   const cfg = loadGConfig();
-  if (cfg.autoBackup && cfg.sheetId && cfg.clientId) {
-    // 앱 시작 시 토큰 있으면 즉시 백업 스케줄
-    if (gToken) scheduleAutoBackup();
+  if (!cfg.sheetId || !cfg.clientId) return;
+  if (!gToken) {
+    // 토큰 없으면 자동 재발급 시도 (silent)
+    try {
+      await new Promise((resolve, reject) => {
+        const tc = google.accounts.oauth2.initTokenClient({
+          client_id: cfg.clientId,
+          scope: 'https://www.googleapis.com/auth/spreadsheets',
+          callback: (resp) => {
+            if (resp.error) reject(resp.error);
+            else { gToken = resp.access_token; sessionStorage.setItem('gToken', gToken); resolve(); }
+          },
+          error_callback: reject
+        });
+        tc.requestAccessToken({ prompt: '' });
+      });
+    } catch(e) {
+      // 자동 로그인 실패 — 로컬 데이터 사용
+      return;
+    }
   }
-})();
+
+  // 구글 시트에서 최신 데이터 로드
+  await autoLoadFromSheets();
+}
+
+async function autoLoadFromSheets() {
+  try {
+    const values = await sheetsGet(`${BACKUP_SHEET_NAME}!A1:B2`);
+    if (!values || !values[1]?.[1]) return; // 백업 데이터 없으면 로컬 유지
+
+    const sheetData = JSON.parse(values[1][1]);
+    const sheetTime = values[0]?.[1] || '';
+    const localBackup = localStorage.getItem('lastBackup') || '';
+
+    // 구글 시트가 로컬보다 최신이면 자동 로드
+    if (!localBackup || sheetTime > localBackup) {
+      DB = sheetData;
+      saveDB(DB);
+      localStorage.setItem('lastBackup', sheetTime);
+      renderDashboard();
+      updateBackupUI();
+      toast('☁ 최신 데이터 로드됨');
+    }
+  } catch(e) {
+    // 실패 시 조용히 로컬 데이터 사용
+  }
+}
+
+// 앱 시작
+window.addEventListener('load', () => {
+  // google gsi 라이브러리 로드 후 실행
+  const tryInit = () => {
+    if (window.google?.accounts?.oauth2) {
+      initBackup();
+    } else {
+      setTimeout(tryInit, 500);
+    }
+  };
+  setTimeout(tryInit, 1000);
+});
