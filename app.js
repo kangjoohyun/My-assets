@@ -173,6 +173,16 @@ function renderDashTab(tab) {
 }
 
 // ── 순서 조정 헬퍼 ────────────────────────────────────
+
+function togglePlan(id) {
+  const detail = document.getElementById('plan-detail-' + id);
+  const chevron = document.getElementById('plan-chevron-' + id);
+  if (!detail) return;
+  const isOpen = detail.style.display !== 'none';
+  detail.style.display = isOpen ? 'none' : 'block';
+  if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+}
+
 function moveItem(arr, id, dir) {
   const idx = arr.findIndex(x => x.id === id);
   if (idx === -1) return arr;
@@ -399,34 +409,37 @@ function renderSaving() {
     });
 
     const el = document.createElement('div');
-    el.className = 'card drag-item'; el.dataset.id = plan.id; el.style.marginBottom = '12px';
+    el.className = 'card drag-item'; el.dataset.id = plan.id; el.style.marginBottom = '10px';
     el.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
-        <div style="display:flex;align-items:flex-start;gap:8px">
-          <span class="drag-handle" style="color:var(--text3);font-size:18px;cursor:grab;touch-action:none;margin-top:2px">⠿</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="togglePlan('${plan.id}')">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="drag-handle" style="color:var(--text3);font-size:18px;cursor:grab;touch-action:none" onclick="event.stopPropagation()">⠿</span>
           <div>
             <div style="font-size:13px;font-weight:600">${a.name}</div>
             <div style="font-size:10px;color:var(--text2);margin-top:2px">${plan.memo||''} · 매월 ${plan.day}일</div>
           </div>
         </div>
-        <div style="text-align:right">
-          <div style="font-family:var(--mono);font-size:15px;font-weight:600;color:var(--accent)">${fmtW(plan.amount)}</div>
-          <div style="font-size:10px;color:var(--text3)">월 적립액</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="text-align:right">
+            <div style="font-family:var(--mono);font-size:15px;font-weight:600;color:var(--accent)">${fmtW(plan.amount)}</div>
+            <div style="font-size:10px;color:var(--text3)">월 적립액</div>
+          </div>
+          <span id="plan-chevron-${plan.id}" style="color:var(--text3);font-size:14px;transition:transform .2s">▼</span>
         </div>
       </div>
 
-      <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
-        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.08em;margin-bottom:6px">현재 잔액 / 비중</div>
-        ${holdingRows}
-        <div style="display:flex;justify-content:flex-end;margin-top:6px;font-size:10px;color:var(--text3)">합계 ${fmtW(totalHoldings)}</div>
-      </div>
-
-      <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.08em;margin-bottom:8px">이번달 배분 → 적립 후 예상 비중</div>
-      ${allocRows}
-
-      <div style="display:flex;gap:6px;margin-top:8px">
-        <button class="btn-sm" style="flex:1" onclick="showEditPlanModal('${plan.id}')">수정</button>
-        <button class="btn-sm" style="color:var(--red)" onclick="deletePlan('${plan.id}')">삭제</button>
+      <div id="plan-detail-${plan.id}" style="display:none;margin-top:12px">
+        <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
+          <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.08em;margin-bottom:6px">현재 잔액 / 비중</div>
+          ${holdingRows}
+          <div style="display:flex;justify-content:flex-end;margin-top:6px;font-size:10px;color:var(--text3)">합계 ${fmtW(totalHoldings)}</div>
+        </div>
+        <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.08em;margin-bottom:8px">이번달 배분 → 적립 후 예상 비중</div>
+        ${allocRows}
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="btn-sm" style="flex:1" onclick="showEditPlanModal('${plan.id}')">수정</button>
+          <button class="btn-sm" style="color:var(--red)" onclick="deletePlan('${plan.id}')">삭제</button>
+        </div>
       </div>`;
     list.appendChild(el);
   });
@@ -841,15 +854,39 @@ function deleteAcct(id) {
 }
 function showAddHoldingModal(aid) {
   openModal(`<div class="modal-handle"></div><div class="modal-title">종목 추가</div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button class="btn-sm" style="flex:1;padding:10px" onclick="showAddCashModal('${aid}')">💵 예수금/현금</button>
+      <button class="btn-sm" style="flex:1;padding:10px;color:var(--accent)" onclick="showAddStockModal('${aid}')">📈 주식/ETF</button>
+    </div>`);
+}
+
+function showAddCashModal(aid) {
+  openModal(`<div class="modal-handle"></div><div class="modal-title">예수금 / 현금 추가</div>
+    <div class="form-row"><div class="form-lbl">이름</div><input class="fi" id="m-hname" value="예수금"></div>
+    <div class="form-row"><div class="form-lbl">잔액 (원)</div><input class="fi" id="m-cash-amt" type="number" placeholder="0"></div>
+    <button class="btn btn-p" style="margin-top:4px" onclick="addCash('${aid}')">추가</button>
+    <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">취소</button>`);
+}
+
+function addCash(aid) {
+  const a=DB.accounts.find(a=>a.id===aid); if(!a)return;
+  const name = document.getElementById('m-hname').value || '예수금';
+  const amt = parseFloat(document.getElementById('m-cash-amt').value)||0;
+  a.holdings.push({id:'h'+Date.now(),name,ticker:'CASH',category:'현금',qty:1,avgPrice:amt,curPrice:amt});
+  saveDB(DB); closeModal(); renderDashboard(); toast('✓ 추가');
+}
+
+function showAddStockModal(aid) {
+  openModal(`<div class="modal-handle"></div><div class="modal-title">주식 / ETF 추가</div>
     <div class="fg2">
       <div class="form-row"><div class="form-lbl">종목명</div><input class="fi" id="m-hname" placeholder="예: QLD"></div>
-      <div class="form-row"><div class="form-lbl">티커</div><input class="fi" id="m-ticker" placeholder="예: QLD"></div>
+      <div class="form-row"><div class="form-lbl">티커 / 관리코드</div><input class="fi" id="m-ticker" placeholder="예: QLD, 069500"></div>
     </div>
     <div style="margin-bottom:10px">
       <button class="btn-sm" onclick="showETFSearchForHolding()">🔍 해외 ETF 현재가 조회</button>
     </div>
     <div class="form-row"><div class="form-lbl">카테고리</div>
-      <select class="fsel" id="m-cat"><option>미국주식</option><option>레버리지</option><option>신흥국</option><option>현금</option><option>채권</option><option>국내주식</option><option>기타</option></select></div>
+      <select class="fsel" id="m-cat"><option>미국주식</option><option>레버리지</option><option>신흥국</option><option>채권</option><option>국내주식</option><option>기타</option></select></div>
     <div class="fg2">
       <div class="form-row"><div class="form-lbl">보유 수량</div><input class="fi" id="m-qty" type="number" placeholder="0"></div>
       <div class="form-row"><div class="form-lbl">평균 단가</div><input class="fi" id="m-avg" type="number" placeholder="0"></div>
@@ -878,6 +915,25 @@ function addHolding(aid) {
 }
 function showHoldingModal(aid, hid) {
   const a=DB.accounts.find(a=>a.id===aid); const h=a?.holdings.find(h=>h.id===hid); if(!h)return;
+  const isCash = h.ticker==='CASH' || h.category==='현금' || h.name==='예수금';
+
+  if (isCash) {
+    // 현금/예수금 — 금액만 입력
+    openModal(`<div class="modal-handle"></div><div class="modal-title">${h.name}</div>
+      <div class="form-row">
+        <div class="form-lbl">잔액 (원)</div>
+        <input class="fi" id="m-cash-amt" type="number" value="${h.avgPrice}" placeholder="0">
+      </div>
+      <div class="form-row">
+        <div class="form-lbl">이름</div>
+        <input class="fi" id="m-hname" value="${h.name}">
+      </div>
+      <button class="btn btn-p" style="margin-top:4px" onclick="editCash('${aid}','${hid}')">저장</button>
+      <button class="btn btn-d" style="margin-top:8px" onclick="deleteHolding('${aid}','${hid}')">삭제</button>
+      <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">취소</button>`);
+    return;
+  }
+
   openModal(`<div class="modal-handle"></div><div class="modal-title">${h.name} 수정</div>
     <div class="fg2">
       <div class="form-row"><div class="form-lbl">종목명</div><input class="fi" id="m-hname" value="${h.name}"></div>
@@ -907,6 +963,18 @@ async function fetchAndFillPrice(ticker) {
   document.getElementById('m-cur').value = krwPrice;
   toast('✓ ' + fmtW(krwPrice) + ' 적용됨');
 }
+
+function editCash(aid, hid) {
+  const a=DB.accounts.find(a=>a.id===aid); const h=a?.holdings.find(h=>h.id===hid); if(!h)return;
+  const amt = parseFloat(document.getElementById('m-cash-amt').value)||0;
+  const name = document.getElementById('m-hname')?.value || h.name;
+  h.name = name;
+  h.avgPrice = amt;
+  h.curPrice = amt;
+  h.qty = 1;
+  saveDB(DB); closeModal(); renderDashboard(); toast('✓ 저장');
+}
+
 function editHolding(aid, hid) {
   const a=DB.accounts.find(a=>a.id===aid); const h=a?.holdings.find(h=>h.id===hid); if(!h)return;
   const newName = document.getElementById('m-hname')?.value; if(newName) h.name = newName;
