@@ -171,6 +171,46 @@ function renderDashTab(tab) {
   if (tab==='asset') renderAssetTab();
   if (tab==='chart') renderChartTab();
 }
+
+// ── 순서 조정 헬퍼 ────────────────────────────────────
+function moveItem(arr, id, dir) {
+  const idx = arr.findIndex(x => x.id === id);
+  if (idx === -1) return arr;
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= arr.length) return arr;
+  const copy = [...arr];
+  [copy[idx], copy[newIdx]] = [copy[newIdx], copy[idx]];
+  return copy;
+}
+
+function moveAcct(id, dir) {
+  DB.accounts = moveItem(DB.accounts, id, dir);
+  saveDB(DB); renderAcctList();
+}
+function moveHolding(acctId, hid, dir) {
+  const a = DB.accounts.find(a => a.id === acctId);
+  if (!a) return;
+  a.holdings = moveItem(a.holdings, hid, dir);
+  saveDB(DB);
+  // 상세 열린 상태 유지
+  renderAcctList();
+  document.getElementById('det-' + acctId).style.display = 'block';
+}
+function movePlan(id, dir) {
+  DB.savingPlans = moveItem(DB.savingPlans, id, dir);
+  saveDB(DB); renderSaving();
+}
+function moveTrade(id, dir) {
+  DB.trades = moveItem(DB.trades, id, dir);
+  saveDB(DB); renderLog();
+}
+function moveTarget(idx, dir) {
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= DB.targets.length) return;
+  [DB.targets[idx], DB.targets[newIdx]] = [DB.targets[newIdx], DB.targets[idx]];
+  saveDB(DB); renderRebalancing();
+}
+
 function renderAcctList() {
   const list = document.getElementById('acct-list');
   list.innerHTML = '';
@@ -188,15 +228,19 @@ function renderAcctList() {
     const pct = subTotal > 0 ? (val/subTotal*100).toFixed(1) + '%' : '';
     const oc = a.owner==='아들' ? 'var(--accent3)' : 'var(--accent2)';
     const el = document.createElement('div');
-    el.className = 'tbl';
+    el.className = 'tbl drag-item';
+    el.dataset.id = a.id;
     el.style.marginBottom = '10px';
-    let h = `<div style="padding:10px 12px;background:var(--bg3);border-bottom:1px solid var(--border);cursor:pointer" onclick="toggleDet('${a.id}')">
+    let h = `<div style="padding:10px 12px;background:var(--bg3);border-bottom:1px solid var(--border)">
       <div style="display:flex;justify-content:space-between;align-items:center">
-        <div>
-          <div style="font-size:13px;font-weight:600">${a.name}</div>
-          <div style="font-size:10px;color:var(--text2);margin-top:1px"><span style="color:${oc}">${a.owner}</span> · ${a.broker} · ${a.type}</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="drag-handle" style="color:var(--text3);font-size:18px;cursor:grab;touch-action:none;padding:2px 4px">⠿</span>
+          <div onclick="toggleDet('${a.id}')" style="cursor:pointer">
+            <div style="font-size:13px;font-weight:600">${a.name}</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:1px"><span style="color:${oc}">${a.owner}</span> · ${a.broker} · ${a.type}</div>
+          </div>
         </div>
-        <div style="text-align:right">
+        <div style="text-align:right" onclick="toggleDet('${a.id}')" style="cursor:pointer">
           <div style="font-family:var(--mono);font-size:14px;font-weight:600">${fmtW(val)}</div>
           <div style="font-size:10px;color:var(--text3)">${pct}</div>
         </div>
@@ -209,24 +253,31 @@ function renderAcctList() {
       a.holdings.forEach(h2 => {
         const hv = hval(h2);
         const ret = h2.avgPrice>0 && h2.ticker!=='CASH' ? (h2.curPrice-h2.avgPrice)/h2.avgPrice*100 : null;
-        d += `<div class="tbl-row col3" onclick="showHoldingModal('${a.id}','${h2.id}')">
-          <div><div class="tbl-nm">${h2.name}</div><div class="tbl-sub">${h2.category} · ${h2.qty.toLocaleString()}주</div></div>
-          <div class="tbl-val">${fmtW(hv)}</div>
-          <div class="tbl-pct ${ret!==null ? pctCls(ret) : 'neu'}">${ret!==null ? fmtPct(ret) : ''}</div></div>`;
+        d += `<div class="drag-item" data-id="${h2.id}" data-acct="${a.id}" data-type="holding" style="display:grid;grid-template-columns:auto 1fr auto auto;border-bottom:1px solid var(--border);align-items:center">
+          <div class="drag-handle" style="padding:0 10px;color:var(--text3);font-size:16px;cursor:grab;touch-action:none">⠿</div>
+          <div onclick="showHoldingModal('${a.id}','${h2.id}')" style="display:grid;grid-template-columns:1fr auto auto;padding:11px 0;gap:8px;align-items:center">
+            <div><div class="tbl-nm">${h2.name}</div><div class="tbl-sub">${h2.category} · ${h2.qty.toLocaleString()}주</div></div>
+            <div class="tbl-val">${fmtW(hv)}</div>
+            <div class="tbl-pct ${ret!==null ? pctCls(ret) : 'neu'}">${ret!==null ? fmtPct(ret) : ''}</div>
+          </div>
+        </div>`;
       });
     }
-    d += `<div style="padding:8px 12px;display:flex;gap:6px;border-top:1px solid var(--border)">
+    d += `<div style="padding:8px 12px;display:flex;gap:6px;border-top:1px solid var(--border);flex-wrap:wrap">
       <button class="btn-sm" style="flex:1" onclick="showAddHoldingModal('${a.id}')">＋ 종목</button>
       <button class="btn-sm" style="flex:1" onclick="showEditAcctModal('${a.id}')">수정</button>
-      <button class="btn-sm" style="flex:1;color:var(--red)" onclick="deleteAcct('${a.id}')">삭제</button>
+      <button class="btn-sm" style="color:var(--red)" onclick="deleteAcct('${a.id}')">삭제</button>
     </div></div>`;
     el.innerHTML = h + d;
     list.appendChild(el);
   });
+  afterRender(setupDragAccts);
 }
 function toggleDet(id) {
   const el = document.getElementById('det-' + id);
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  const opening = el.style.display === 'none';
+  el.style.display = opening ? 'block' : 'none';
+  if (opening) afterRender(() => setupDragHoldings(id));
 }
 function renderAssetTab() {
   const total = grandTotal(); const byCat = {};
@@ -348,12 +399,15 @@ function renderSaving() {
     });
 
     const el = document.createElement('div');
-    el.className = 'card'; el.style.marginBottom = '12px';
+    el.className = 'card drag-item'; el.dataset.id = plan.id; el.style.marginBottom = '12px';
     el.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
-        <div>
-          <div style="font-size:13px;font-weight:600">${a.name}</div>
-          <div style="font-size:10px;color:var(--text2);margin-top:2px">${plan.memo||''} · 매월 ${plan.day}일</div>
+        <div style="display:flex;align-items:flex-start;gap:8px">
+          <span class="drag-handle" style="color:var(--text3);font-size:18px;cursor:grab;touch-action:none;margin-top:2px">⠿</span>
+          <div>
+            <div style="font-size:13px;font-weight:600">${a.name}</div>
+            <div style="font-size:10px;color:var(--text2);margin-top:2px">${plan.memo||''} · 매월 ${plan.day}일</div>
+          </div>
         </div>
         <div style="text-align:right">
           <div style="font-family:var(--mono);font-size:15px;font-weight:600;color:var(--accent)">${fmtW(plan.amount)}</div>
@@ -370,8 +424,8 @@ function renderSaving() {
       <div style="font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.08em;margin-bottom:8px">이번달 배분 → 적립 후 예상 비중</div>
       ${allocRows}
 
-      <div class="btn-row">
-        <button class="btn-sm" onclick="showEditPlanModal('${plan.id}')">수정</button>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn-sm" style="flex:1" onclick="showEditPlanModal('${plan.id}')">수정</button>
         <button class="btn-sm" style="color:var(--red)" onclick="deletePlan('${plan.id}')">삭제</button>
       </div>`;
     list.appendChild(el);
@@ -710,10 +764,14 @@ function renderRebalancing() {
     if (abs>10) { sc='st-bad'; st='✗ 이탈 '+fmtPct(diff); }
     else if (abs>5) { sc='st-warn'; st='△ 주의 '+fmtPct(diff); }
     const fw = Math.min(100, Math.round(actual/Math.max(t.target*1.5, 0.01)*100));
-    const el = document.createElement('div'); el.className = 'alloc-item';
-    el.innerHTML = `<div class="alloc-top"><span class="alloc-nm">${t.category}</span><div class="alloc-nums"><span class="alloc-cur" style="color:${color}">${(actual*100).toFixed(1)}%</span><span class="alloc-tgt">/ ${(t.target*100).toFixed(0)}%</span></div></div><div class="alloc-bg"><div class="alloc-fill" style="width:${fw}%;background:${color}"></div></div><div class="alloc-foot"><span class="${sc}">${st}</span><span style="color:var(--text3)">${fmtW(val)}</span></div>`;
+    const el = document.createElement('div');
+    el.className = 'alloc-item drag-item';
+    el.dataset.id = t.category;
+    el.dataset.type = 'target';
+    el.innerHTML = `<div class="alloc-top"><div style="display:flex;align-items:center;gap:8px"><span class="drag-handle" style="color:var(--text3);font-size:16px;cursor:grab;touch-action:none">⠿</span><span class="alloc-nm">${t.category}</span></div><div class="alloc-nums"><span class="alloc-cur" style="color:${color}">${(actual*100).toFixed(1)}%</span><span class="alloc-tgt">/ ${(t.target*100).toFixed(0)}%</span></div></div><div class="alloc-bg"><div class="alloc-fill" style="width:${fw}%;background:${color}"></div></div><div class="alloc-foot"><span class="${sc}">${st}</span><span style="color:var(--text3)">${fmtW(val)}</span></div>`;
     list.appendChild(el);
   });
+  afterRender(setupDragTargets);
 }
 function renderRiskItems() {
   const son = ownerTotal('아들'); const ah = allH().filter(h=>h.owner==='아들');
@@ -1298,3 +1356,134 @@ window.addEventListener('load', () => {
   };
   setTimeout(tryInit, 1000);
 });
+
+// ══════════════════════════════════════════════════
+// DRAG & DROP SORT (touch + mouse)
+// ══════════════════════════════════════════════════
+
+let dragState = null;
+
+function initDrag(container, onReorder) {
+  if (!container) return;
+  let items = () => [...container.querySelectorAll('.drag-item')];
+  let dragging = null;
+  let placeholder = null;
+  let startY = 0;
+  let offsetY = 0;
+
+  function getY(e) {
+    return e.touches ? e.touches[0].clientY : e.clientY;
+  }
+
+  function onStart(e) {
+    const handle = e.target.closest('.drag-handle');
+    if (!handle) return;
+    const item = handle.closest('.drag-item');
+    if (!item) return;
+
+    e.preventDefault();
+    dragging = item;
+    startY = getY(e);
+    offsetY = item.getBoundingClientRect().top - startY;
+
+    // placeholder
+    placeholder = document.createElement('div');
+    placeholder.style.cssText = `height:${item.offsetHeight}px;background:rgba(232,160,32,.08);border:1px dashed rgba(232,160,32,.3);border-radius:8px;margin-bottom:6px`;
+    item.parentNode.insertBefore(placeholder, item.nextSibling);
+
+    item.style.cssText += `;position:fixed;z-index:500;width:${item.offsetWidth}px;opacity:.9;box-shadow:0 8px 24px rgba(0,0,0,.4);pointer-events:none;top:${item.getBoundingClientRect().top}px;left:${item.getBoundingClientRect().left}px`;
+
+    document.addEventListener('mousemove', onMove, {passive:false});
+    document.addEventListener('touchmove', onMove, {passive:false});
+    document.addEventListener('mouseup', onEnd);
+    document.addEventListener('touchend', onEnd);
+  }
+
+  function onMove(e) {
+    if (!dragging) return;
+    e.preventDefault();
+    const y = getY(e);
+    dragging.style.top = (y + offsetY) + 'px';
+
+    // find insert position
+    const its = items().filter(i => i !== dragging);
+    let insertBefore = null;
+    for (const it of its) {
+      const rect = it.getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) { insertBefore = it; break; }
+    }
+    if (insertBefore) container.insertBefore(placeholder, insertBefore);
+    else container.appendChild(placeholder);
+  }
+
+  function onEnd() {
+    if (!dragging) return;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('mouseup', onEnd);
+    document.removeEventListener('touchend', onEnd);
+
+    // restore style
+    dragging.style.position = '';
+    dragging.style.zIndex = '';
+    dragging.style.width = '';
+    dragging.style.opacity = '';
+    dragging.style.boxShadow = '';
+    dragging.style.pointerEvents = '';
+    dragging.style.top = '';
+    dragging.style.left = '';
+
+    // insert at placeholder position
+    container.insertBefore(dragging, placeholder);
+    placeholder.remove();
+
+    // collect new order
+    const newOrder = items().map(i => i.dataset.id);
+    onReorder(newOrder);
+    dragging = null;
+  }
+
+  container.addEventListener('mousedown', onStart);
+  container.addEventListener('touchstart', onStart, {passive:false});
+}
+
+function setupDragAccts() {
+  const c = document.getElementById('acct-list');
+  if (!c) return;
+  initDrag(c, (order) => {
+    DB.accounts = order.map(id => DB.accounts.find(a => a.id === id)).filter(Boolean);
+    saveDB(DB);
+  });
+}
+
+function setupDragHoldings(acctId) {
+  const c = document.getElementById('det-' + acctId);
+  if (!c) return;
+  initDrag(c, (order) => {
+    const a = DB.accounts.find(a => a.id === acctId);
+    if (!a) return;
+    a.holdings = order.map(id => a.holdings.find(h => h.id === id)).filter(Boolean);
+    saveDB(DB);
+  });
+}
+
+function setupDragPlans() {
+  const c = document.getElementById('saving-list');
+  if (!c) return;
+  initDrag(c, (order) => {
+    DB.savingPlans = order.map(id => DB.savingPlans.find(p => p.id === id)).filter(Boolean);
+    saveDB(DB);
+  });
+}
+
+function setupDragTargets() {
+  const c = document.getElementById('rebal-list');
+  if (!c) return;
+  initDrag(c, (order) => {
+    DB.targets = order.map(cat => DB.targets.find(t => t.category === cat)).filter(Boolean);
+    saveDB(DB);
+  });
+}
+
+// 각 render 함수 뒤에 drag 초기화 — MutationObserver로 DOM 생성 후 실행
+function afterRender(fn) { requestAnimationFrame(() => requestAnimationFrame(fn)); }
