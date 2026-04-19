@@ -14,7 +14,10 @@ function loadDB() {
   try { return JSON.parse(localStorage.getItem(SK)) || defDB(); }
   catch(e) { return defDB(); }
 }
-function saveDB(db) { localStorage.setItem(SK, JSON.stringify(db)); }
+function saveDB(db) {
+  localStorage.setItem(SK, JSON.stringify(db));
+  scheduleAutoBackup();
+}
 function defDB() {
   return {
     accounts: [
@@ -1119,12 +1122,7 @@ function scheduleAutoBackup() {
   autoBackupTimer = setTimeout(() => backupToSheets(true), 30000);
 }
 
-// saveDB를 래핑해서 자동 백업 트리거
-const _origSaveDB = saveDB;
-function saveDB(db) {
-  _origSaveDB(db);
-  scheduleAutoBackup();
-}
+// 자동 백업은 saveDB 내부에서 직접 호출됨
 
 // ── 백업 UI 업데이트 ───────────────────────────────
 function updateBackupUI() {
