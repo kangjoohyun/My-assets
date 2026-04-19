@@ -19,7 +19,8 @@
 <div id="app">
   <div id="topbar">
     <div class="tb-left"><div class="tb-title">MY ASSETS</div><div class="tb-sub" id="tb-total">로딩 중...</div></div>
-    <div class="tb-right"><button class="icon-btn" onclick="refreshAll()">↻</button></div>
+    <div class="tb-right"><button class="icon-btn" onclick="refreshAll()">↻</button>
+    <button class="icon-btn" onclick="showBackupModal()" title="백업 설정" id="backup-icon">☁</button></div>
   </div>
   <div id="main">
     <div class="page on" id="page-dashboard">
@@ -78,6 +79,14 @@
       <div id="log-list"></div>
     </div>
     <div class="page" id="page-sim">
+      <div class="slbl">계좌 선택</div>
+      <div class="card">
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <button class="btn-sm" onclick="selectAllSimAccts(true)">전체 선택</button>
+          <button class="btn-sm" onclick="selectAllSimAccts(false)">전체 해제</button>
+        </div>
+        <div id="sim-acct-sel"></div>
+      </div>
       <div class="slbl">가정값 설정</div>
       <div class="card">
         <div class="fg2">
@@ -89,15 +98,22 @@
           <div class="form-row"><div class="form-lbl">균형(%)</div><input class="fi" id="sim-r2" type="number" value="11"></div>
           <div class="form-row"><div class="form-lbl">낙관(%)</div><input class="fi" id="sim-r3" type="number" value="14"></div>
         </div>
-        <div class="form-row"><div class="form-lbl">기간 (년)</div><input class="fi" id="sim-yrs" type="number" value="20" min="1" max="40"></div>
+        <div class="fg2">
+          <div class="form-row"><div class="form-lbl">기간 (년)</div><input class="fi" id="sim-yrs" type="number" value="20" min="1" max="40"></div>
+          <div class="form-row"><div class="form-lbl">출생년도</div><input class="fi" id="sim-birthyear" type="number" value="1980" placeholder="예: 1975"></div>
+        </div>
         <button class="btn btn-p" onclick="runSim()">시뮬레이션 실행</button>
       </div>
       <div id="sim-results" style="display:none">
-        <div class="slbl">결과 요약</div><div class="stat-grid" id="sim-summary"></div>
-        <div class="slbl">연도별 성장</div>
+        <div class="slbl">통합 결과 요약</div>
+        <div class="stat-grid" id="sim-summary"></div>
+        <div class="slbl">통합 성장 차트</div>
         <div class="card" style="overflow-x:auto"><canvas id="sim-canvas" height="160"></canvas><div class="lc-labels" id="sim-xlabels"></div></div>
-        <div class="slbl">상세 테이블</div>
+        <div id="sim-age-table"></div>
+        <div class="slbl">통합 상세 테이블</div>
         <div class="card" style="overflow-x:auto"><table class="sim-tbl" id="sim-table"></table></div>
+        <div class="slbl">계좌별 시뮬레이션</div>
+        <div id="sim-per-acct"></div>
       </div>
     </div>
     <div class="page" id="page-risk">
@@ -119,6 +135,8 @@
     <div class="nav-item" onclick="showPage('risk',this)"><span class="ni-icon">△</span><span class="ni-lbl">리스크</span></div>
   </div>
 </div>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

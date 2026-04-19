@@ -1,18 +1,22 @@
 // ─────────────────────────────────────────────────────
-//  config.js  —  여기에 본인 Google OAuth 정보를 입력하세요
+//  config.js  —  Google OAuth 설정
 // ─────────────────────────────────────────────────────
 //
-//  설정 방법:
-//  1. https://console.cloud.google.com 접속
-//  2. 새 프로젝트 생성 (예: "my-assets")
-//  3. API 및 서비스 → Google Sheets API 활성화
-//  4. 사용자 인증 정보 → OAuth 2.0 클라이언트 ID 생성
-//     - 유형: 웹 애플리케이션
-//     - 승인된 JavaScript 출처: https://YOUR_GITHUB_ID.github.io
-//  5. 발급된 클라이언트 ID를 아래에 붙여넣기
+//  이미 Google Cloud Console에서 발급받은 Client ID를 아래에 입력하세요.
+//  (이전에 로그인 기능 설정 시 발급받은 것 그대로 사용 가능)
+//
+//  주의: 승인된 JavaScript 출처에 아래 주소가 등록되어 있어야 합니다:
+//    https://kangjoohyun.github.io
 
 window.APP_CONFIG = {
-  CLIENT_ID: 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com',
-  API_KEY: '',   // 선택사항 — 없어도 동작합니다
-  SCOPES: 'https://www.googleapis.com/auth/spreadsheets openid email profile'
+  CLIENT_ID: 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com'
 };
+
+// 앱 시작 시 config 자동 주입
+(function() {
+  const stored = JSON.parse(localStorage.getItem('gConfig') || '{}');
+  if (!stored.clientId && window.APP_CONFIG.CLIENT_ID !== 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com') {
+    stored.clientId = window.APP_CONFIG.CLIENT_ID;
+    localStorage.setItem('gConfig', JSON.stringify(stored));
+  }
+})();
