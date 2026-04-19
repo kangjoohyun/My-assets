@@ -1009,28 +1009,98 @@ function addPlan() {
   saveDB(DB); closeModal(); renderSaving(); toast('✓ 추가');
 }
 function showEditPlanModal(pid) {
-  const p=DB.savingPlans.find(p=>p.id===pid); if(!p)return;
-  const ar=p.allocations.map((a,i)=>`<div class="fg2" style="margin-bottom:6px">
-    <input class="fi" id="al-n-${i}" value="${a.name}" placeholder="종목명">
-    <input class="fi" id="al-a-${i}" type="number" value="${a.amount}" placeholder="금액">
-  </div>`).join('');
+  const p = DB.savingPlans.find(p => p.id === pid); if (!p) return;
+  const acct = DB.accounts.find(a => a.id === p.accountId);
+
+  // 해당 계좌의 종목 목록 (현금 제외)
+  const holdings = acct ? acct.holdings.filter(h => h.ticker !== 'CASH' && h.category !== '현금') : [];
+
+  // 기존 배분에 없는 종목도 추가 가능하도록 전체 종목 옵션
+  const allHoldings = DB.accounts.flatMap(a =>
+    a.holdings.filter(h => h.ticker !== 'CASH' && h.category !== '현금')
+      .map(h => ({ name: h.name, ticker: h.ticker }))
+  );
+  const uniqueHoldings = [...new Map(allHoldings.map(h => [h.ticker, h])).values()];
+
+  const optionsHTML = uniqueHoldings.map(h =>
+    `<option value="${h.name}">${h.name} (${h.ticker})</option>`
+  ).join('');
+
+  const ar = p.allocations.map((a, i) => `
+    <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center" id="al-row-${i}">
+      <select class="fsel" id="al-n-${i}" style="flex:2">
+        <option value="${a.name}" selected>${a.name}</option>
+        ${optionsHTML}
+      </select>
+      <input class="fi" id="al-a-${i}" type="number" value="${a.amount}" placeholder="금액" style="flex:1;min-width:80px">
+      <button class="btn-sm" style="color:var(--red);flex-shrink:0;padding:8px" onclick="removeAlRow('al-row-${i}')">✕</button>
+    </div>`).join('');
+
   openModal(`<div class="modal-handle"></div><div class="modal-title">적립 계획 수정</div>
     <div class="fg2">
       <div class="form-row"><div class="form-lbl">월 적립액</div><input class="fi" id="m-amt" type="number" value="${p.amount}"></div>
       <div class="form-row"><div class="form-lbl">적립일</div><input class="fi" id="m-day" type="number" value="${p.day}"></div>
     </div>
     <div class="form-row"><div class="form-lbl">메모</div><input class="fi" id="m-memo" value="${p.memo||''}"></div>
-    <div class="slbl" style="margin-top:12px">종목별 배분</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">
+      <div class="slbl" style="margin:0">종목별 배분</div>
+      <div id="al-remain" style="font-family:var(--mono);font-size:11px;color:var(--accent3)"></div>
+    </div>
     <div id="al-rows">${ar}</div>
-    <button class="btn-sm" style="margin-bottom:8px" onclick="addAlRow(${p.allocations.length})">＋ 배분 추가</button>
+    <button class="btn-sm" style="margin-bottom:10px;width:100%" onclick="addAlRow('${p.accountId}')">＋ 종목 추가</button>
     <button class="btn btn-p" onclick="savePlan('${pid}')">저장</button>
     <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">취소</button>`);
+
+  // 잔여 금액 실시간 표시
+  updateAlRemain();
 }
-function addAlRow(cnt) {
-  const c=document.getElementById('al-rows'); const d=document.createElement('div');
-  d.className='fg2'; d.style.marginBottom='6px';
-  d.innerHTML=`<input class="fi" id="al-n-${cnt}" placeholder="종목명"><input class="fi" id="al-a-${cnt}" type="number" placeholder="금액">`;
+
+function updateAlRemain() {
+  const total = parseFloat(document.getElementById('m-amt')?.value) || 0;
+  let used = 0;
+  for (let i = 0;; i++) {
+    const a = document.getElementById('al-a-' + i);
+    if (!a) break;
+    used += parseFloat(a.value) || 0;
+  }
+  const remain = total - used;
+  const el = document.getElementById('al-remain');
+  if (el) {
+    el.textContent = remain === 0 ? '✓ 배분 완료' : (remain > 0 ? `잔여 ${fmt(remain)}원` : `${fmt(Math.abs(remain))}원 초과`);
+    el.style.color = remain === 0 ? 'var(--accent3)' : remain > 0 ? 'var(--accent)' : 'var(--red)';
+  }
+}
+
+function removeAlRow(rowId) {
+  const row = document.getElementById(rowId);
+  if (row) { row.remove(); updateAlRemain(); }
+}
+
+function addAlRow(acctId) {
+  const acct = DB.accounts.find(a => a.id === acctId);
+  const allHoldings = DB.accounts.flatMap(a =>
+    a.holdings.filter(h => h.ticker !== 'CASH' && h.category !== '현금')
+      .map(h => ({ name: h.name, ticker: h.ticker }))
+  );
+  const uniqueHoldings = [...new Map(allHoldings.map(h => [h.ticker, h])).values()];
+  const optionsHTML = uniqueHoldings.map(h =>
+    `<option value="${h.name}">${h.name} (${h.ticker})</option>`
+  ).join('');
+
+  const c = document.getElementById('al-rows');
+  const cnt = c.children.length;
+  const d = document.createElement('div');
+  d.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+  d.id = 'al-row-' + cnt;
+  d.innerHTML = `
+    <select class="fsel" id="al-n-${cnt}" style="flex:2">
+      <option value="">종목 선택</option>
+      ${optionsHTML}
+    </select>
+    <input class="fi" id="al-a-${cnt}" type="number" placeholder="금액" style="flex:1;min-width:80px" oninput="updateAlRemain()">
+    <button class="btn-sm" style="color:var(--red);flex-shrink:0;padding:8px" onclick="removeAlRow('al-row-${cnt}')">✕</button>`;
   c.appendChild(d);
+  updateAlRemain();
 }
 function savePlan(pid) {
   const p=DB.savingPlans.find(p=>p.id===pid); if(!p)return;
