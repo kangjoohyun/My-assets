@@ -586,12 +586,34 @@ function renderSimPage() {
       <span style="font-family:var(--mono);font-size:11px;color:var(--text3)">${fmtW(v)}</span>`;
     sel.appendChild(row);
   });
+  // 선택된 계좌 기준으로 초기값 자동 반영
+  updateSimInputs();
+}
+
+
+function updateSimInputs() {
+  const selectedIds = simSelectedAccts.length ? simSelectedAccts : DB.accounts.map(a=>a.id);
+  const selectedAccts = DB.accounts.filter(a => selectedIds.includes(a.id));
+
+  // 선택된 계좌 총 자산
+  const totalInit = selectedAccts.reduce((s,a) => s+acctVal(a), 0);
+
+  // 선택된 계좌의 적립 계획 합계
+  const acctPlans = {};
+  DB.savingPlans.forEach(p => { acctPlans[p.accountId] = (acctPlans[p.accountId]||0) + p.amount; });
+  const totalMonthly = selectedAccts.reduce((s,a) => s+(acctPlans[a.id]||0), 0);
+
+  const initEl = document.getElementById('sim-init');
+  const monthlyEl = document.getElementById('sim-monthly');
+  if (initEl) initEl.value = Math.round(totalInit/10000);
+  if (monthlyEl && totalMonthly > 0) monthlyEl.value = Math.round(totalMonthly/10000);
 }
 
 function toggleSimAcct(id) {
   const cb = document.getElementById('sc-'+id);
   if (cb.checked) { if (!simSelectedAccts.includes(id)) simSelectedAccts.push(id); }
   else { simSelectedAccts = simSelectedAccts.filter(i => i!==id); }
+  updateSimInputs();
 }
 
 function selectAllSimAccts(val) {
