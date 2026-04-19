@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="자산관리">
 <meta name="theme-color" content="#0a0a0a">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <link rel="manifest" href="manifest.json">
 <title>자산관리</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -135,6 +138,23 @@
     <div class="nav-item" onclick="showPage('risk',this)"><span class="ni-icon">△</span><span class="ni-lbl">리스크</span></div>
   </div>
 </div>
+<script>
+// Service Worker 등록 — 캐시 없이 항상 최신 파일 로드
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js')
+    .then(reg => {
+      // 새 버전 감지 시 즉시 적용
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'activated') {
+            window.location.reload();
+          }
+        });
+      });
+    });
+}
+</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="config.js"></script>
 <script src="app.js"></script>

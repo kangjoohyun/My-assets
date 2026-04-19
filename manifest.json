@@ -2,7 +2,7 @@
   "name": "자산관리",
   "short_name": "자산관리",
   "description": "개인 자산 통합 관리",
-  "start_url": "https://kangjoohyun.github.io/My-assets/index.html",
+  "start_url": "https://kangjoohyun.github.io/My-assets/",
   "display": "standalone",
   "background_color": "#0a0a0a",
   "theme_color": "#0a0a0a",
@@ -18,5 +18,6 @@
       "sizes": "512x512",
       "type": "image/png"
     }
-  ]
+  ],
+  "scope": "https://kangjoohyun.github.io/My-assets/"
 }
