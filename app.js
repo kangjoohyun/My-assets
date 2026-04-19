@@ -66,6 +66,7 @@ let activeCats = ['전체'];
 let activeDashTab = 'acct';
 let logFilter = '전체';
 let simSelectedAccts = [];
+let riskSelectedAccts = []; // 리스크 페이지 선택 계좌
 
 // ── Helpers ────────────────────────────────────────
 function fmt(n, u='') {
@@ -785,11 +786,38 @@ function runSim() {
 // ══════════════════════════════════════════════════
 // RISK PAGE
 // ══════════════════════════════════════════════════
-function renderRisk() { renderRebalancing(); renderRiskItems(); renderChecklist(); }
+
+function renderRiskSelector() {
+  const sel = document.getElementById('risk-acct-sel');
+  if (!sel) return;
+  sel.innerHTML = '';
+  // 기본값: 전체 계좌
+  if (!riskSelectedAccts.length) riskSelectedAccts = DB.accounts.map(a => a.id);
+  DB.accounts.forEach(a => {
+    const v = acctVal(a);
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (riskSelectedAccts.includes(a.id) ? ' on' : '');
+    chip.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:11px';
+    chip.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:${a.color};flex-shrink:0"></span>${a.name}`;
+    chip.onclick = () => {
+      if (riskSelectedAccts.includes(a.id)) {
+        if (riskSelectedAccts.length > 1) riskSelectedAccts = riskSelectedAccts.filter(i => i !== a.id);
+      } else {
+        riskSelectedAccts.push(a.id);
+      }
+      renderRisk();
+    };
+    sel.appendChild(chip);
+  });
+}
+
+function renderRisk() { renderRiskSelector(); renderRebalancing(); renderRiskItems(); renderChecklist(); }
 function renderRebalancing() {
   const list = document.getElementById('rebal-list'); list.innerHTML = '';
   if (!DB.targets.length) { list.innerHTML = '<div class="empty" style="padding:1.5rem">목표 비중 없음<br>목표 설정을 눌러주세요</div>'; return; }
-  const son = ownerTotal('아들'); const ah = allH().filter(h=>h.owner==='아들');
+  const selectedAccts = DB.accounts.filter(a => riskSelectedAccts.includes(a.id));
+  const son = selectedAccts.reduce((s,a) => s+acctVal(a), 0);
+  const ah = allH().filter(h => riskSelectedAccts.includes(h.acctId));
   DB.targets.forEach(t => {
     const val = ah.filter(h=>h.category===t.category).reduce((s,h)=>s+hval(h),0);
     const actual = son>0 ? val/son : 0;
@@ -809,7 +837,9 @@ function renderRebalancing() {
   afterRender(setupDragTargets);
 }
 function renderRiskItems() {
-  const son = ownerTotal('아들'); const ah = allH().filter(h=>h.owner==='아들');
+  const selectedAccts = DB.accounts.filter(a => riskSelectedAccts.includes(a.id));
+  const son = selectedAccts.reduce((s,a) => s+acctVal(a), 0);
+  const ah = allH().filter(h => riskSelectedAccts.includes(h.acctId));
   const getPct = cat => son>0 ? ah.filter(h=>h.category===cat).reduce((s,h)=>s+hval(h),0)/son*100 : 0;
   const us=getPct('미국주식')+getPct('레버리지'), lev=getPct('레버리지'), cash=getPct('현금'), india=getPct('신흥국');
   const items = [
