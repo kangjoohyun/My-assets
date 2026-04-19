@@ -880,6 +880,11 @@ function showHoldingModal(aid, hid) {
   const a=DB.accounts.find(a=>a.id===aid); const h=a?.holdings.find(h=>h.id===hid); if(!h)return;
   openModal(`<div class="modal-handle"></div><div class="modal-title">${h.name} 수정</div>
     <div class="fg2">
+      <div class="form-row"><div class="form-lbl">종목명</div><input class="fi" id="m-hname" value="${h.name}"></div>
+      <div class="form-row"><div class="form-lbl">티커 / 관리코드</div><input class="fi" id="m-ticker" value="${h.ticker}" placeholder="예: QLD, 069500"></div>
+    </div>
+    <div style="font-size:10px;color:var(--text3);margin:-6px 0 10px">국내 ETF는 6자리 코드 (예: 069500), 해외는 티커 (예: QLD)</div>
+    <div class="fg2">
       <div class="form-row"><div class="form-lbl">수량</div><input class="fi" id="m-qty" type="number" value="${h.qty}"></div>
       <div class="form-row"><div class="form-lbl">평균 단가</div><input class="fi" id="m-avg" type="number" value="${h.avgPrice}"></div>
     </div>
@@ -904,6 +909,8 @@ async function fetchAndFillPrice(ticker) {
 }
 function editHolding(aid, hid) {
   const a=DB.accounts.find(a=>a.id===aid); const h=a?.holdings.find(h=>h.id===hid); if(!h)return;
+  const newName = document.getElementById('m-hname')?.value; if(newName) h.name = newName;
+  const newTicker = document.getElementById('m-ticker')?.value?.trim(); if(newTicker) h.ticker = newTicker;
   h.qty=parseFloat(document.getElementById('m-qty').value)||0;
   h.avgPrice=parseFloat(document.getElementById('m-avg').value)||0;
   h.curPrice=parseFloat(document.getElementById('m-cur').value)||0;
@@ -1091,51 +1098,65 @@ async function importPricesFromSheet() {
     return;
   }
 
-  toast('현재가 불러오는 중...');
+  toast('티커 전송 중...');
 
   try {
-    // 먼저 티커 내보내기 (시트에 없는 경우 대비)
+    // 티커 내보내기
     await exportTickersToSheet();
 
-    // 잠시 대기 (GOOGLEFINANCE 계산 시간)
-    await new Promise(r => setTimeout(r, 2000));
+    // GOOGLEFINANCE 계산 대기 (최대 3회 재시도)
+    let priceMap = {};
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      toast(`현재가 조회 중... (${attempt}/3)`);
+      await new Promise(r => setTimeout(r, attempt * 2000));
 
-    // 현재가 읽기
-    const values = await sheetsGet(`${PRICE_SHEET}!A2:C100`);
-    if (!values || !values.length) {
-      toast('현재가 데이터 없음 — 잠시 후 다시 시도');
-      return;
-    }
-
-    // 티커 → 현재가 맵
-    const priceMap = {};
-    values.forEach(row => {
-      if (row[0] && row[1]) {
-        const price = parseFloat(row[1]);
-        if (!isNaN(price) && price > 0) priceMap[row[0]] = price;
+      const values = await sheetsGet(`${PRICE_SHEET}!A2:D100`);
+      if (values && values.length) {
+        values.forEach(row => {
+          if (row[0] && row[1]) {
+            const price = parseFloat(row[1]);
+            if (!isNaN(price) && price > 0) priceMap[row[0]] = price;
+          }
+        });
       }
-    });
-
-    if (!Object.keys(priceMap).length) {
-      toast('⚠️ 현재가 조회 실패 — 구글 시트에서 수식 확인 필요');
-      showPriceSheetGuide();
-      return;
+      if (Object.keys(priceMap).length > 0) break;
     }
 
-    // 앱 데이터 업데이트
+    // 조회된 것만 업데이트 (부분 업데이트 허용)
     let updated = 0;
+    let skipped = 0;
     DB.accounts.forEach(a => {
       a.holdings.forEach(h => {
-        if (h.ticker && h.ticker !== 'CASH' && priceMap[h.ticker]) {
-          h.curPrice = priceMap[h.ticker];
-          updated++;
+        if (h.ticker && h.ticker !== 'CASH') {
+          if (priceMap[h.ticker]) {
+            h.curPrice = priceMap[h.ticker];
+            updated++;
+          } else {
+            skipped++;
+          }
         }
       });
     });
 
-    saveDB(DB);
-    renderDashboard();
-    toast(`✓ ${updated}개 종목 현재가 업데이트됨`);
+    if (updated > 0) {
+      saveDB(DB);
+      renderDashboard();
+      const msg = skipped > 0
+        ? `✓ ${updated}개 업데이트 (${skipped}개 조회 실패)`
+        : `✓ ${updated}개 종목 현재가 업데이트됨`;
+      toast(msg);
+    } else {
+      // 전부 실패한 경우 — 시트 직접 확인 안내
+      toast('조회 실패 — 시트에서 직접 확인 후 다시 시도');
+      // 구글 시트 바로 열기 버튼 제공
+      const sheetId = loadGConfig().sheetId;
+      if (sheetId) {
+        const url = `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=0`;
+        if (confirm('구글 시트 현재가 탭을 열어서 수식이 계산됐는지 확인하시겠어요?')) {
+          window.open(url, '_blank');
+        }
+      }
+    }
 
   } catch(e) {
     toast('오류: ' + e.message);
