@@ -12,7 +12,7 @@
 //  5. 발급된 클라이언트 ID를 아래에 붙여넣기
 
 window.APP_CONFIG = {
-  CLIENT_ID: '839551670199-9vtl04tl74a153dm1kh5qsb0efapkccd.apps.googleusercontent.com',
+  CLIENT_ID: 'YOUR_CLIENT_ID_HERE.apps.googleusercontent.com',
   API_KEY: '',   // 선택사항 — 없어도 동작합니다
   SCOPES: 'https://www.googleapis.com/auth/spreadsheets openid email profile'
 };
