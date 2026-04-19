@@ -1256,7 +1256,7 @@ async function sheetsGet(range) {
 async function sheetsPut(range, values) {
   const id = loadGConfig().sheetId;
   if (!id || !getToken()) return false;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
   const r = await fetch(url, {
     method: 'PUT',
     headers: { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/json' },
