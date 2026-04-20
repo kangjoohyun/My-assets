@@ -136,16 +136,43 @@ function calcStarPrice(port) {
   return Math.round(avg * (1 + starPct / 100) * 100) / 100;
 }
 
-// ── 폭락 대비 LOC 리스트 ──────────────────────────
-// 별지점 아래로 단계별 LOC (별지점의 75% → 50% → 25% 등)
+// ── 거미줄 매수 (폭락 대비 LOC) ─────────────────────
+// 하루 예산 고정, 가격이 낮아질수록 살 수 있는 주수 증가분만 추가 LOC
+// 예: 예산 360, 90달러→4주 기준, 72달러→5주 가능이면 1주 추가, 60달러→6주이면 1주 추가...
 function calcCrashLOCs(port, starPrice, unitBuy) {
-  if (!starPrice || !unitBuy) return [];
-  const ratios = [0.875, 0.75, 0.625, 0.5, 0.4375, 0.375, 0.3125, 0.25];
-  return ratios.map(r => {
-    const price = Math.round(starPrice * r * 100) / 100;
-    const qty = Math.max(1, Math.floor(unitBuy / price));
-    return { price, qty };
-  }).filter(l => l.price > 0);
+  // 구버전 호환용 (사용 안함)
+  return calcCrashLOCsNew(port, starPrice, unitBuy);
+}
+
+function calcCrashLOCsNew(port, refPrice, unitBuy) {
+  if (!refPrice || !unitBuy || refPrice <= 0) return [];
+
+  // 기준 주수 (현재 기준가로 살 수 있는 주수)
+  const baseQty = Math.floor(unitBuy / refPrice);
+  if (baseQty <= 0) return [];
+
+  const result = [];
+  let prevQty = baseQty;
+
+  // 가격을 점점 낮추면서 추가 주수 발생 시점마다 LOC 추가
+  // 가격 단계: refPrice의 5%씩 낮춤, 최소 refPrice*0.1까지
+  let price = refPrice;
+  const step = refPrice * 0.05; // 5% 단계
+  const minPrice = refPrice * 0.1;
+
+  while (price > minPrice && result.length < 10) {
+    price = Math.round((price - step) * 100) / 100;
+    if (price <= 0) break;
+    const newQty = Math.floor(unitBuy / price);
+    if (newQty > prevQty) {
+      // 추가 주수가 생긴 시점: 그 추가분(1주씩)을 LOC로 걸기
+      const addQty = newQty - prevQty;
+      result.push({ price, qty: addQty });
+      prevQty = newQty;
+    }
+  }
+
+  return result;
 }
 
 // ── 오늘의 가이드 계산 ────────────────────────────
@@ -164,47 +191,61 @@ function calcGuide(port, currentPrice) {
 
   let buyGuides = [];
   let sellGuides = [];
-  const crashLOCs = calcCrashLOCs(port, starBuyPrice, unitBuy);
+  const crashLOCs = calcCrashLOCsNew(port, starBuyPrice, unitBuy);
 
   if (mode === 'normal') {
     if (phase === 'init') {
-      // 초기: 큰수(별지점 10~15%위) + 평단 + 아래로
+      // 초기: 큰수(현재가 10~15% 위) LOC
       const bigPrice = currentPrice ? Math.round(currentPrice * 1.125 * 100) / 100 : 0;
       const bigQty = bigPrice > 0 ? Math.max(1, Math.floor(unitBuy / bigPrice)) : 0;
-      const avgQty = avg > 0 ? Math.max(1, Math.floor(unitBuy / avg)) : 0;
       buyGuides = [
-        { label: '큰수 (★or큰수)', price: bigPrice, qty: bigQty, note: '현재가 10~15% 위' },
+        { label: '큰수 LOC (현재가 10~15% 위)', price: bigPrice, qty: bigQty },
       ];
-      const crashForInit = calcCrashLOCs(port, currentPrice || bigPrice, unitBuy);
+      const crashForInit = calcCrashLOCsNew(port, currentPrice || bigPrice, unitBuy);
       sellGuides = [];
       return { mode, phase, T, starPct, starPrice, buyGuides, sellGuides, crashLOCs: crashForInit };
     }
 
     if (phase === 'first') {
-      // 전반전: LOC 별지점 × 절반 + LOC 평단 × 절반
-      const halfUnit = unitBuy / 2;
-      const starQty = starBuyPrice > 0 ? Math.max(1, Math.floor(halfUnit / starBuyPrice)) : 0;
-      const avgQty = avg > 0 ? Math.max(1, Math.floor(halfUnit / avg)) : 0;
+      // 전반전: 예산 절반씩 → 별지점 / 평단
+      // 홀수 주 발생 시 큰금액(별지점) 쪽에 +1
+      const halfBudget = unitBuy / 2;
+      let starQty = starBuyPrice > 0 ? Math.floor(halfBudget / starBuyPrice) : 0;
+      let avgQty  = avg > 0          ? Math.floor(halfBudget / avg)          : 0;
+
+      // 예산 내에서 총비용 계산
+      const totalCost = starBuyPrice * starQty + avg * avgQty;
+      const leftover = unitBuy - totalCost;
+
+      // 남은 예산으로 주수 추가 (홀수 처리)
+      // 큰금액(별지점)에 1주 더 살 수 있는지 먼저 확인
+      if (starBuyPrice > 0 && leftover >= starBuyPrice) {
+        starQty += 1;
+      } else if (avg > 0 && leftover >= avg) {
+        // 못 사면 작은금액(평단)에 1주 추가
+        avgQty += 1;
+      }
+
       buyGuides = [
-        { label: `★or큰수 LOC`, price: starBuyPrice, qty: starQty },
-        { label: '평단 LOC', price: Math.round(avg * 100) / 100, qty: avgQty },
+        { label: `★or큰수 LOC`, price: starBuyPrice, qty: Math.max(1, starQty) },
+        { label: '평단 LOC',     price: Math.round(avg * 100) / 100, qty: Math.max(1, avgQty) },
       ];
     } else {
-      // 후반전: LOC 별지점 × 전체
+      // 후반전: 예산 전체를 별지점 LOC
       const starQty = starBuyPrice > 0 ? Math.max(1, Math.floor(unitBuy / starBuyPrice)) : 0;
       buyGuides = [
         { label: `★or큰수 LOC`, price: starBuyPrice, qty: starQty },
       ];
     }
 
-    // 매도 (공통): 퀴터매도 + 최종지정가
+    // 매도 (공통): 퀴터매도 + 지정가(나머지)
     if (holdings > 0 && avg > 0) {
-      const quarterQty = Math.floor(holdings / 4);
-      const finalQty = holdings;
+      const quarterQty = Math.floor(holdings / 4);           // 1/4 퀴터매도
+      const remainQty  = holdings - quarterQty;              // 나머지 전량 지정가
       const finalTargetPrice = Math.round(avg * (1 + targetPct / 100) * 100) / 100;
       sellGuides = [
         { label: `LOC ★${starPct.toFixed(2)}% (퀴터매도)`, price: starPrice, qty: quarterQty, note: '보유수량의 1/4' },
-        { label: `지정가 +${targetPct}% (최종매도)`, price: finalTargetPrice, qty: finalQty, note: '전량' },
+        { label: `지정가 +${targetPct}% (최종매도)`,       price: finalTargetPrice, qty: remainQty, note: `나머지 ${remainQty}주` },
       ];
     }
 
