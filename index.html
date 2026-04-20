@@ -119,6 +119,18 @@
         <div class="card" style="overflow-x:auto"><table class="sim-tbl" id="sim-table"></table></div>
         <div class="slbl">계좌별 시뮬레이션</div>
         <div id="sim-per-acct"></div>
+
+        <div class="slbl">연금 수령 시뮬레이션</div>
+        <div class="card card-accent" style="margin-bottom:8px">
+          <div style="font-size:12px;color:var(--accent);font-weight:500;margin-bottom:10px">각 계좌별 수령 조건을 설정하면 월 수령액을 계산합니다</div>
+          <div id="pension-acct-settings"></div>
+          <div class="form-row" style="margin-top:4px">
+            <div class="form-lbl">수령 후 운용 이율 (기본값, %)</div>
+            <input class="fi" id="pension-default-rate" type="number" value="4" step="0.5" placeholder="4">
+          </div>
+          <button class="btn btn-p" onclick="calcPension()">연금 수령액 계산</button>
+        </div>
+        <div id="pension-results" style="display:none"></div>
       </div>
     </div>
     <div class="page" id="page-risk">

@@ -590,6 +590,8 @@ function renderSimPage() {
   });
   // 선택된 계좌 기준으로 초기값 자동 반영
   updateSimInputs();
+  // 연금 설정 UI 렌더
+  renderPensionSettings();
 }
 
 
@@ -1642,6 +1644,242 @@ function saveSmsRecords(parsed) {
 
   localStorage.setItem('mumuDB', JSON.stringify([soxlPort]));
 })();
+
+
+// ══════════════════════════════════════════════════
+// 연금 수령 시뮬레이션
+// ══════════════════════════════════════════════════
+
+// 연금 설정 로드/저장
+function loadPensionSettings() {
+  try { return JSON.parse(localStorage.getItem('pensionSettings') || '{}'); }
+  catch(e) { return {}; }
+}
+function savePensionSettings(s) { localStorage.setItem('pensionSettings', JSON.stringify(s)); }
+
+// 월 수령액 계산 (연금 현가 공식)
+// PMT = PV × r / (1 - (1+r)^-n)
+// PV: 수령 시작 시점 자산, r: 월 이율, n: 수령 개월수
+function calcMonthlyPension(pv, annualRate, years) {
+  if (!pv || pv <= 0) return 0;
+  if (!annualRate || annualRate <= 0) {
+    // 이율 0이면 단순 분할
+    return pv / (years * 12);
+  }
+  const r = annualRate / 100 / 12;
+  const n = years * 12;
+  return pv * r / (1 - Math.pow(1 + r, -n));
+}
+
+// 시뮬레이션 페이지 로드 시 연금 설정 UI 렌더
+function renderPensionSettings() {
+  const settingsEl = document.getElementById('pension-acct-settings');
+  if (!settingsEl) return;
+
+  const saved = loadPensionSettings();
+  const selectedIds = simSelectedAccts.length ? simSelectedAccts : DB.accounts.map(a => a.id);
+  const accts = DB.accounts.filter(a => selectedIds.includes(a.id));
+  const curAge = currentAge();
+
+  let html = '';
+  accts.forEach(a => {
+    const s = saved[a.id] || { startAge: 65, years: 20, rate: 4, enabled: true };
+    html += `
+      <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:12px;font-weight:600">${a.name}</div>
+          <div class="toggle-track${s.enabled?' on':''}" onclick="togglePensionAcct('${a.id}')" id="pension-toggle-${a.id}">
+            <div class="toggle-thumb"></div>
+          </div>
+        </div>
+        <div class="fg3">
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-lbl">수령 시작 나이</div>
+            <input class="fi" id="ps-age-${a.id}" type="number" value="${s.startAge}" min="${curAge}" max="90" style="font-size:13px">
+          </div>
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-lbl">수령 기간 (년)</div>
+            <input class="fi" id="ps-years-${a.id}" type="number" value="${s.years}" min="1" max="40" style="font-size:13px">
+          </div>
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-lbl">운용 이율 (%)</div>
+            <input class="fi" id="ps-rate-${a.id}" type="number" value="${s.rate}" step="0.5" style="font-size:13px">
+          </div>
+        </div>
+      </div>`;
+  });
+
+  settingsEl.innerHTML = html || '<div style="font-size:12px;color:var(--text3)">먼저 위에서 시뮬레이션을 실행해 주세요</div>';
+}
+
+function togglePensionAcct(acctId) {
+  const saved = loadPensionSettings();
+  if (!saved[acctId]) saved[acctId] = { startAge:65, years:20, rate:4, enabled:true };
+  saved[acctId].enabled = !saved[acctId].enabled;
+  savePensionSettings(saved);
+  const el = document.getElementById('pension-toggle-' + acctId);
+  if (el) el.classList.toggle('on', saved[acctId].enabled);
+}
+
+function calcPension() {
+  // 설정 저장
+  const saved = loadPensionSettings();
+  const defaultRate = parseFloat(document.getElementById('pension-default-rate')?.value) || 4;
+  const selectedIds = simSelectedAccts.length ? simSelectedAccts : DB.accounts.map(a => a.id);
+  const accts = DB.accounts.filter(a => selectedIds.includes(a.id));
+
+  accts.forEach(a => {
+    const startAge = parseFloat(document.getElementById('ps-age-' + a.id)?.value) || 65;
+    const years    = parseFloat(document.getElementById('ps-years-' + a.id)?.value) || 20;
+    const rate     = parseFloat(document.getElementById('ps-rate-' + a.id)?.value) || defaultRate;
+    if (!saved[a.id]) saved[a.id] = {};
+    saved[a.id] = { ...saved[a.id], startAge, years, rate };
+  });
+  savePensionSettings(saved);
+
+  // 시뮬 결과 필요 → 시뮬이 안 돌아갔으면 먼저 돌리기
+  const simResultsEl = document.getElementById('sim-results');
+  if (simResultsEl.style.display === 'none') {
+    toast('먼저 시뮬레이션을 실행해 주세요');
+    return;
+  }
+
+  const curAge = currentAge();
+  const curYear = new Date().getFullYear();
+  const birthYear = DB.settings?.birthYear || 1980;
+
+  // 각 계좌별 수령 시작 시점 자산 예측
+  const r2 = parseFloat(document.getElementById('sim-r2')?.value || 11) / 100; // 균형 이율
+  const acctPlans = {};
+  DB.savingPlans.forEach(p => { acctPlans[p.accountId] = (acctPlans[p.accountId]||0) + p.amount; });
+
+  function projectAsset(initVal, monthly, r, years) {
+    let v = initVal;
+    for (let m = 0; m < years * 12; m++) v = v * (1 + r/12) + monthly;
+    return v;
+  }
+
+  const results = [];
+  let totalMonthly = 0;
+  let totalPeriods = {}; // 기간별 합산
+
+  accts.forEach(a => {
+    const s = saved[a.id] || { startAge:65, years:20, rate:4, enabled:true };
+    if (!s.enabled) return;
+
+    const initVal = acctVal(a);
+    const monthly = acctPlans[a.id] || 0;
+    const yearsToStart = Math.max(0, s.startAge - curAge);
+    const projectedAsset = projectAsset(initVal, monthly, r2, yearsToStart);
+    const monthlyPension = calcMonthlyPension(projectedAsset, s.rate, s.years);
+    const totalPension = monthlyPension * s.years * 12;
+
+    results.push({
+      name: a.name,
+      color: a.color,
+      startAge: s.startAge,
+      endAge: s.startAge + s.years,
+      years: s.years,
+      rate: s.rate,
+      projectedAsset,
+      monthlyPension,
+      totalPension,
+      yearsToStart
+    });
+
+    totalMonthly += monthlyPension;
+  });
+
+  if (!results.length) {
+    toast('수령할 계좌가 없습니다');
+    return;
+  }
+
+  // 결과 렌더링
+  const el = document.getElementById('pension-results');
+  el.style.display = 'block';
+
+  let html = '';
+
+  // 통합 요약
+  html += `
+    <div class="stat-grid">
+      <div class="stat-card span2 highlight">
+        <div class="sc-lbl">전체 합산 월 수령액 (균형 이율 기준)</div>
+        <div class="sc-val">${fmtW(Math.round(totalMonthly))}</div>
+        <div class="sc-sub">연 ${fmtW(Math.round(totalMonthly * 12))}</div>
+      </div>
+    </div>`;
+
+  // 나이별 수령액 타임라인
+  const allAges = [...new Set(results.flatMap(r => [r.startAge, r.endAge]))].sort((a,b)=>a-b);
+  const minAge = Math.min(...results.map(r=>r.startAge));
+  const maxAge = Math.max(...results.map(r=>r.endAge));
+
+  html += `<div class="slbl">나이별 월 수령액 합산</div>
+    <div class="card" style="overflow-x:auto">
+      <table class="sim-tbl">
+        <thead><tr>
+          <th>나이</th><th>연도</th>
+          ${results.map(r=>`<th>${r.name.split('(')[0]}</th>`).join('')}
+          <th>월 합계</th>
+        </tr></thead>
+        <tbody>`;
+
+  // 5세 단위로 표시
+  const ageSteps = [];
+  for (let age = minAge; age <= maxAge; age += 5) ageSteps.push(age);
+  if (!ageSteps.includes(maxAge)) ageSteps.push(maxAge);
+
+  ageSteps.forEach(age => {
+    const year = curYear + (age - curAge);
+    let rowTotal = 0;
+    const cells = results.map(r => {
+      if (age >= r.startAge && age < r.endAge) {
+        rowTotal += r.monthlyPension;
+        return `<td style="color:var(--accent3)">${fmtW(Math.round(r.monthlyPension))}</td>`;
+      }
+      return `<td style="color:var(--text3)">—</td>`;
+    }).join('');
+    const isKey = age % 10 === 0;
+    html += `<tr${isKey?' class="hl"':''}>
+      <td style="color:var(--accent)">${age}세</td>
+      <td>${year}년</td>
+      ${cells}
+      <td style="font-weight:600;color:var(--accent)">${rowTotal>0?fmtW(Math.round(rowTotal)):'—'}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+
+  // 계좌별 상세
+  html += `<div class="slbl">계좌별 상세</div>`;
+  results.forEach(r => {
+    html += `
+      <div class="card" style="margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="width:8px;height:8px;border-radius:50%;background:${r.color}"></span>
+            <span style="font-size:13px;font-weight:600">${r.name}</span>
+          </div>
+          <div style="text-align:right">
+            <div style="font-family:var(--mono);font-size:16px;font-weight:700;color:var(--accent3)">${fmtW(Math.round(r.monthlyPension))}<span style="font-size:10px;color:var(--text3)">/월</span></div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
+          <div><div style="color:var(--text3)">수령 시작</div><div style="font-family:var(--mono);font-weight:600">${r.startAge}세 (${curYear+(r.startAge-curAge)}년)</div></div>
+          <div><div style="color:var(--text3)">수령 기간</div><div style="font-family:var(--mono);font-weight:600">${r.years}년 (${r.endAge}세까지)</div></div>
+          <div><div style="color:var(--text3)">수령 시점 예상 자산</div><div style="font-family:var(--mono);font-weight:600">${fmt(Math.round(r.projectedAsset))}원</div></div>
+          <div><div style="color:var(--text3)">운용 이율</div><div style="font-family:var(--mono);font-weight:600">${r.rate}%</div></div>
+          <div><div style="color:var(--text3)">총 수령액</div><div style="font-family:var(--mono);font-weight:600;color:var(--accent2)">${fmt(Math.round(r.totalPension))}원</div></div>
+          <div><div style="color:var(--text3)">연 수령액</div><div style="font-family:var(--mono);font-weight:600">${fmtW(Math.round(r.monthlyPension*12))}</div></div>
+        </div>
+      </div>`;
+  });
+
+  el.innerHTML = html;
+  toast('✓ 연금 수령액 계산 완료');
+}
 
 // INIT
 renderDashboard();
