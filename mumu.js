@@ -156,7 +156,7 @@ function calcCrashLOCsNew(port, refPrice, unitBuy) {
   const result = [];
   const maxQty = Math.ceil(unitBuy / 10); // 최소 $10까지만 (무한 방지)
 
-  for (let n = baseQty + 1; n <= maxQty && result.length < 8; n++) {
+  for (let n = baseQty + 2; n <= maxQty && result.length < 8; n++) {
     const price = Math.floor(unitBuy / n * 100) / 100; // 내림 (살 수 있는 최대가)
     if (price <= 0) break;
     result.push({ price, qty: 1 }); // 항상 1주씩 추가

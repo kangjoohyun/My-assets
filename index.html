@@ -51,6 +51,10 @@
         <div class="tbl"><div class="tbl-hd col3"><span>카테고리</span><span style="text-align:right">금액</span><span style="text-align:right">비중</span></div><div id="asset-rows"></div></div>
       </div>
       <div id="dt-chart" style="display:none">
+        <div class="card">
+          <div class="slbl" style="margin-top:0">자산 추이 (월별)</div>
+          <div id="history-chart-wrap" style="width:100%;min-height:80px"></div>
+        </div>
         <div class="card"><div class="slbl" style="margin-top:0">계좌주별</div><div class="donut-wrap"><svg id="donut-owner" width="110" height="110" viewBox="0 0 110 110"></svg><div class="donut-legend" id="donut-owner-legend"></div></div></div>
         <div class="card"><div class="slbl" style="margin-top:0">계좌유형별</div><div class="donut-wrap"><svg id="donut-type" width="110" height="110" viewBox="0 0 110 110"></svg><div class="donut-legend" id="donut-type-legend"></div></div></div>
         <div class="card"><div class="slbl" style="margin-top:0">자산 카테고리별</div><div class="donut-wrap"><svg id="donut-cat" width="110" height="110" viewBox="0 0 110 110"></svg><div class="donut-legend" id="donut-cat-legend"></div></div></div>
@@ -99,9 +103,9 @@
           <div class="form-row"><div class="form-lbl">월 적립 (만원)</div><input class="fi" id="sim-monthly" type="number" value="100"></div>
         </div>
         <div class="fg3">
-          <div class="form-row"><div class="form-lbl">보수(%)</div><input class="fi" id="sim-r1" type="number" value="8"></div>
-          <div class="form-row"><div class="form-lbl">균형(%)</div><input class="fi" id="sim-r2" type="number" value="11"></div>
-          <div class="form-row"><div class="form-lbl">낙관(%)</div><input class="fi" id="sim-r3" type="number" value="14"></div>
+          <div class="form-row"><div class="form-lbl">보수(%)</div><input class="fi" id="sim-r1" type="number" value="4"></div>
+          <div class="form-row"><div class="form-lbl">균형(%)</div><input class="fi" id="sim-r2" type="number" value="8"></div>
+          <div class="form-row"><div class="form-lbl">낙관(%)</div><input class="fi" id="sim-r3" type="number" value="12"></div>
         </div>
         <div class="fg2">
           <div class="form-row"><div class="form-lbl">기간 (년)</div><input class="fi" id="sim-yrs" type="number" value="20" min="1" max="40"></div>

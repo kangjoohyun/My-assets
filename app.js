@@ -316,6 +316,8 @@ function renderChartTab() {
   drawDonut('donut-type','donut-type-legend', Object.entries(types), grandTotal());
   const cats = {}; allH().forEach(h => { const v=hval(h); if(!cats[h.category])cats[h.category]=0; cats[h.category]+=v; });
   drawDonut('donut-cat','donut-cat-legend', Object.entries(cats).sort((a,b)=>b[1]-a[1]), grandTotal());
+  // 히스토리 꺾은선 그래프
+  setTimeout(() => renderHistoryChart(), 100);
 }
 function drawDonut(svgId, legendId, data, total) {
   const svg = document.getElementById(svgId);
@@ -1683,7 +1685,7 @@ function renderPensionSettings() {
 
   let html = '';
   accts.forEach(a => {
-    const s = saved[a.id] || { startAge: 65, years: 20, rate: 4, enabled: true };
+    const s = saved[a.id] || { startAge: 60, years: 20, rate: 4, enabled: true };
     html += `
       <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -1732,7 +1734,7 @@ function calcPension() {
     const startAge = parseFloat(document.getElementById('ps-age-' + a.id)?.value) || 65;
     const years    = parseFloat(document.getElementById('ps-years-' + a.id)?.value) || 20;
     const rate     = parseFloat(document.getElementById('ps-rate-' + a.id)?.value) || defaultRate;
-    if (!saved[a.id]) saved[a.id] = {};
+    if (!saved[a.id]) saved[a.id] = { startAge:60, years:20, rate:4, enabled:true };
     saved[a.id] = { ...saved[a.id], startAge, years, rate };
   });
   savePensionSettings(saved);
@@ -1749,7 +1751,8 @@ function calcPension() {
   const birthYear = DB.settings?.birthYear || 1980;
 
   // 각 계좌별 수령 시작 시점 자산 예측
-  const r2 = parseFloat(document.getElementById('sim-r2')?.value || 11) / 100; // 균형 이율
+  const r1 = parseFloat(document.getElementById('sim-r1')?.value || 4) / 100;  // 보수 이율 (연금 기준)
+  const r2 = parseFloat(document.getElementById('sim-r2')?.value || 8) / 100; // 균형 이율
   const acctPlans = {};
   DB.savingPlans.forEach(p => { acctPlans[p.accountId] = (acctPlans[p.accountId]||0) + p.amount; });
 
@@ -1770,7 +1773,7 @@ function calcPension() {
     const initVal = acctVal(a);
     const monthly = acctPlans[a.id] || 0;
     const yearsToStart = Math.max(0, s.startAge - curAge);
-    const projectedAsset = projectAsset(initVal, monthly, r2, yearsToStart);
+    const projectedAsset = projectAsset(initVal, monthly, r1, yearsToStart); // 보수 이율 기준
     const monthlyPension = calcMonthlyPension(projectedAsset, s.rate, s.years);
     const totalPension = monthlyPension * s.years * 12;
 
@@ -1877,12 +1880,231 @@ function calcPension() {
       </div>`;
   });
 
+
+  // ── 분리과세 한도 체크 (연 2,000만원) ──
+  const TAX_LIMIT_ANNUAL = 20000000;
+  const TAX_LIMIT_MONTHLY = TAX_LIMIT_ANNUAL / 12;
+
+  // 각 시점별 월 합산 계산
+  const pensionPeriods = []; // { startAge, endAge, monthlyTotal }
+  const ageSet = new Set(results.flatMap(r => [r.startAge, r.endAge]));
+  const sortedAges = [...ageSet].sort((a,b)=>a-b);
+  for (let i = 0; i < sortedAges.length - 1; i++) {
+    const age = sortedAges[i];
+    const nextAge = sortedAges[i+1];
+    const total = results.filter(r => r.startAge <= age && r.endAge > age)
+                         .reduce((s, r) => s + r.monthlyPension, 0);
+    if (total > 0) pensionPeriods.push({ startAge: age, endAge: nextAge, monthlyTotal: total });
+  }
+
+  const maxMonthly = Math.max(...pensionPeriods.map(p => p.monthlyTotal), 0);
+  const overLimit = maxMonthly > TAX_LIMIT_MONTHLY;
+
+  if (overLimit) {
+    // 분리과세 한도 내 월 수령액으로 기간 재계산
+    const safeMonthly = TAX_LIMIT_MONTHLY;
+    html += `
+      <div class="card card-accent" style="margin-bottom:8px">
+        <div style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:8px">⚠️ 분리과세 한도 초과</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7;margin-bottom:10px">
+          최대 월 수령액 <b style="color:var(--red)">${fmtW(Math.round(maxMonthly))}</b>이 연금소득 분리과세 한도 
+          <b style="color:var(--text)">${fmtW(TAX_LIMIT_MONTHLY)}/월 (연 2,000만원)</b>을 초과합니다.<br>
+          한도 내로 수령하면 세금이 유리하나 수령 기간이 길어집니다.
+        </div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px;font-size:12px">
+          <div style="font-weight:600;margin-bottom:6px">분리과세 한도 내 수령 시 계좌별 기간 연장 예상</div>
+          ${results.map(r => {
+            // 한도 내 월 수령액으로 역산한 수령 기간
+            const safeAcctMonthly = Math.min(r.monthlyPension, TAX_LIMIT_MONTHLY);
+            const safeYears = r.monthlyPension > 0
+              ? calcSafeYears(r.projectedAsset, r.rate, safeAcctMonthly)
+              : r.years;
+            return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+              <span style="color:var(--text2)">${r.name}</span>
+              <span style="font-family:var(--mono)">${r.years}년 → <span style="color:var(--accent3)">${safeYears.toFixed(1)}년</span></span>
+            </div>`;
+          }).join('')}
+          <div style="margin-top:8px;font-size:11px;color:var(--text3)">※ 각 계좌 독립 계산 기준</div>
+        </div>
+      </div>`;
+  }
+
+  // ── 월별 수령 상세 표 ──
+  const tableStartAge = Math.min(...results.map(r=>r.startAge));
+  const tableEndAge   = Math.max(...results.map(r=>r.endAge));
+
+  html += `
+    <div class="slbl">월 수령 상세 표 (60세~)</div>
+    <div class="card" style="overflow-x:auto;padding:10px">
+      <table class="sim-tbl">
+        <thead><tr>
+          <th>나이</th>
+          ${results.map(r=>`<th>${r.name.replace(/\(.*\)/,'').trim()}</th>`).join('')}
+          <th>월 합계</th>
+          <th>연 합계</th>
+          <th>과세</th>
+        </tr></thead>
+        <tbody>`;
+
+  for (let age = tableStartAge; age < tableEndAge; age++) {
+    const year = curYear + (age - curAge);
+    let rowTotal = 0;
+    const cells = results.map(r => {
+      if (age >= r.startAge && age < r.endAge) {
+        rowTotal += r.monthlyPension;
+        return `<td style="color:var(--accent3);font-size:11px">${fmtW(Math.round(r.monthlyPension))}</td>`;
+      }
+      return `<td style="color:var(--text3)">—</td>`;
+    }).join('');
+    const annualTotal = rowTotal * 12;
+    const taxStatus = rowTotal === 0 ? '' : annualTotal > TAX_LIMIT_ANNUAL
+      ? `<td style="color:var(--red);font-size:10px">합산<br>과세</td>`
+      : `<td style="color:var(--accent3);font-size:10px">분리<br>과세</td>`;
+    if (rowTotal === 0) continue;
+    html += `<tr${age%5===0?' class="hl"':''}>
+      <td style="color:var(--accent)">${age}세</td>
+      ${cells}
+      <td style="font-weight:600;color:var(--accent)">${fmtW(Math.round(rowTotal))}</td>
+      <td style="font-family:var(--mono);font-size:11px">${fmtW(Math.round(annualTotal))}</td>
+      ${taxStatus}
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+
   el.innerHTML = html;
   toast('✓ 연금 수령액 계산 완료');
 }
 
+// 분리과세 한도 월수령액으로 역산한 수령 기간 계산
+// PMT = PV * r / (1-(1+r)^-n) → n = -log(1 - PV*r/PMT) / log(1+r)
+function calcSafeYears(pv, annualRate, monthlyPmt) {
+  if (!pv || !monthlyPmt || monthlyPmt <= 0) return 0;
+  if (!annualRate || annualRate <= 0) return pv / monthlyPmt / 12;
+  const r = annualRate / 100 / 12;
+  const x = 1 - pv * r / monthlyPmt;
+  if (x <= 0) return 999; // 원금이 이자로 충당 → 무한대
+  const n = -Math.log(x) / Math.log(1 + r);
+  return n / 12;
+}
+
+
+// ══════════════════════════════════════════════════
+// 자산 히스토리 (월말 스냅샷)
+// ══════════════════════════════════════════════════
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem('assetHistory') || '[]'); }
+  catch(e) { return []; }
+}
+function saveHistory(h) { localStorage.setItem('assetHistory', JSON.stringify(h)); }
+
+function recordSnapshot() {
+  const history = loadHistory();
+  const today = tod();
+  const ym = today.slice(0, 7); // YYYY-MM
+  const total = grandTotal();
+  const me = ownerTotal('본인');
+  const son = ownerTotal('아들');
+
+  // 같은 달 스냅샷이 있으면 덮어씀
+  const idx = history.findIndex(h => h.ym === ym);
+  const snap = { ym, date: today, total, me, son };
+  if (idx >= 0) history[idx] = snap;
+  else history.push(snap);
+
+  // 최근 24개월만 유지
+  history.sort((a,b) => a.ym.localeCompare(b.ym));
+  if (history.length > 24) history.splice(0, history.length - 24);
+  saveHistory(history);
+}
+
+function renderHistoryChart() {
+  const history = loadHistory();
+  const container = document.getElementById('history-chart-wrap');
+  if (!container) return;
+
+  if (history.length < 2) {
+    container.innerHTML = '<div style="font-size:11px;color:var(--text3);text-align:center;padding:20px">데이터가 부족합니다.<br>매월 앱 접속 시 자동으로 기록됩니다.</div>';
+    return;
+  }
+
+  const W = container.clientWidth || 300;
+  const H = 160;
+  const pL = 8, pR = 8, pT = 16, pB = 24;
+  const cW = W - pL - pR, cH = H - pT - pB;
+
+  const maxVal = Math.max(...history.map(h => h.total));
+  const minVal = Math.min(...history.map(h => h.total));
+  const range = maxVal - minVal || 1;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // 격자선
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.lineWidth = 0.5;
+  [0.25, 0.5, 0.75].forEach(r => {
+    const y = pT + cH * (1 - r);
+    ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(pL + cW, y); ctx.stroke();
+  });
+
+  const n = history.length;
+  function getX(i) { return pL + i / (n-1) * cW; }
+  function getY(v) { return pT + cH - (v - minVal) / range * cH; }
+
+  // 전체 자산 라인
+  ctx.beginPath(); ctx.strokeStyle = '#e8a020'; ctx.lineWidth = 2;
+  history.forEach((h, i) => { i===0 ? ctx.moveTo(getX(i), getY(h.total)) : ctx.lineTo(getX(i), getY(h.total)); });
+  ctx.stroke();
+
+  // 본인 라인
+  ctx.beginPath(); ctx.strokeStyle = '#4a9eff'; ctx.lineWidth = 1.5;
+  history.forEach((h, i) => { i===0 ? ctx.moveTo(getX(i), getY(h.me)) : ctx.lineTo(getX(i), getY(h.me)); });
+  ctx.stroke();
+
+  // 아들 라인
+  ctx.beginPath(); ctx.strokeStyle = '#3cb878'; ctx.lineWidth = 1.5;
+  history.forEach((h, i) => { i===0 ? ctx.moveTo(getX(i), getY(h.son)) : ctx.lineTo(getX(i), getY(h.son)); });
+  ctx.stroke();
+
+  // 점 + 최신값 표시
+  const last = history[history.length-1];
+  [['total','#e8a020'],[' me','#4a9eff'],['son','#3cb878']].forEach(([key, color]) => {
+    const k = key.trim();
+    const i = n-1;
+    const v = last[k];
+    if (!v) return;
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.arc(getX(i), getY(v), 3, 0, Math.PI*2);
+    ctx.fill();
+  });
+
+  // X 레이블 (처음/중간/마지막)
+  ctx.fillStyle = 'rgba(136,136,136,0.7)';
+  ctx.font = '9px monospace';
+  [[0, history[0].ym], [Math.floor(n/2), history[Math.floor(n/2)]?.ym], [n-1, last.ym]].forEach(([i, label]) => {
+    if (!label) return;
+    const x = getX(i);
+    ctx.textAlign = i===0 ? 'left' : i===n-1 ? 'right' : 'center';
+    ctx.fillText(label.slice(2), x, H - 4);
+  });
+
+  container.innerHTML = '';
+  container.appendChild(canvas);
+
+  // 범례
+  const legend = document.createElement('div');
+  legend.style.cssText = 'display:flex;gap:12px;justify-content:center;margin-top:6px;font-size:10px';
+  [['전체','#e8a020',last.total],['본인','#4a9eff',last.me],['아들','#3cb878',last.son]].forEach(([label,color,val]) => {
+    legend.innerHTML += `<span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:2px;background:${color};display:inline-block"></span><span style="color:var(--text2)">${label}</span><span style="font-family:var(--mono);color:var(--text)">${fmt(val)}</span></span>`;
+  });
+  container.appendChild(legend);
+}
+
 // INIT
 renderDashboard();
+recordSnapshot(); // 앱 시작 시 스냅샷 저장
 updateTopbar();
 
 // ══════════════════════════════════════════════════
