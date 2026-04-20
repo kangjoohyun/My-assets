@@ -133,12 +133,14 @@
       <div class="slbl">리스크 체크</div><div class="card" id="risk-list"></div>
       <div class="slbl">분기 체크리스트</div><div class="card" id="checklist"></div>
     </div>
+    <div class="page" id="page-mumu"></div>
   </div>
   <div id="nav">
     <div class="nav-item on" onclick="showPage('dashboard',this)"><span class="ni-icon">◈</span><span class="ni-lbl">현황</span></div>
     <div class="nav-item" onclick="showPage('saving',this)"><span class="ni-icon">◇</span><span class="ni-lbl">월적립</span></div>
     <div class="nav-item" onclick="showPage('log',this)"><span class="ni-icon">◉</span><span class="ni-lbl">기록</span></div>
     <div class="nav-item" onclick="showPage('sim',this)"><span class="ni-icon">◎</span><span class="ni-lbl">시뮬</span></div>
+    <div class="nav-item" onclick="showPage('mumu',this)"><span class="ni-icon">∞</span><span class="ni-lbl">무매</span></div>
     <div class="nav-item" onclick="showPage('risk',this)"><span class="ni-icon">△</span><span class="ni-lbl">리스크</span></div>
   </div>
 </div>
@@ -161,6 +163,7 @@ if ('serviceWorker' in navigator) {
 </script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="config.js"></script>
+<script src="mumu.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

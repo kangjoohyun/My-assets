@@ -110,6 +110,7 @@ function renderPage(name) {
   if (name==='log') renderLog();
   if (name==='sim') renderSimPage();
   if (name==='risk') renderRisk();
+  if (name==='mumu') renderMumu();
 }
 function refreshAll() {
   const cur = document.querySelector('.page.on').id.replace('page-','');
@@ -1610,6 +1611,37 @@ function saveSmsRecords(parsed) {
   renderLog();
   toast(`✓ ${saved}건 거래 기록 저장됨`);
 }
+
+
+// 무매 초기 데이터 — 현재 진행 중인 SOXL 포트폴리오 이어받기
+(function initMumuData() {
+  const existing = JSON.parse(localStorage.getItem('mumuDB') || '[]');
+  if (existing.length > 0) return; // 이미 데이터 있으면 스킵
+
+  const soxlPort = {
+    id: 'mu_soxl_init',
+    version: 'v4.0',
+    currency: 'USD',
+    ticker: 'SOXL',
+    seed: 15000,
+    splits: 40,
+    targetPct: 20,
+    fee: 0.07,
+    nickname: '메리츠1',
+    lastPrice: 0,
+    createdAt: '2026-04-10',
+    trades: [
+      { id: 'tr1', date: '2026-04-10', type: '매수', price: 76.39, qty: 4, tTag: 'T+1', amount: 305.56 },
+      { id: 'tr2', date: '2026-04-13', type: '매수', price: 81.25, qty: 2, tTag: 'T+0.5', amount: 162.50 },
+      { id: 'tr3', date: '2026-04-14', type: '매수', price: 85.31, qty: 2, tTag: 'T+0.5', amount: 170.62 },
+      { id: 'tr4', date: '2026-04-15', type: '매수', price: 85.96, qty: 2, tTag: 'T+0.5', amount: 171.92 },
+      { id: 'tr5', date: '2026-04-16', type: '매수', price: 88.37, qty: 2, tTag: 'T+0.5', amount: 176.74 },
+      { id: 'tr6', date: '2026-04-17', type: '매수', price: 94.68, qty: 2, tTag: 'T+0.5', amount: 189.36 },
+    ]
+  };
+
+  localStorage.setItem('mumuDB', JSON.stringify([soxlPort]));
+})();
 
 // INIT
 renderDashboard();

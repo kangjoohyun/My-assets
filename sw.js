@@ -1,5 +1,5 @@
 // Service Worker — 캐시 없이 항상 네트워크에서 최신 파일 로드
-const VERSION = 'v' + Date.now();
+const VERSION = 'v1776649788';
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
