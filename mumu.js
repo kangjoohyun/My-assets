@@ -147,29 +147,19 @@ function calcCrashLOCs(port, starPrice, unitBuy) {
 function calcCrashLOCsNew(port, refPrice, unitBuy) {
   if (!refPrice || !unitBuy || refPrice <= 0) return [];
 
-  // 기준 주수 (현재 기준가로 살 수 있는 주수)
+  // 기준 주수: 현재 기준가에서 살 수 있는 주수
   const baseQty = Math.floor(unitBuy / refPrice);
   if (baseQty <= 0) return [];
 
+  // 패턴: unitBuy / n → n주를 살 수 있는 최대 가격
+  // 즉 n주째부터 1주 추가로 살 수 있는 LOC 가격 = unitBuy / n
   const result = [];
-  let prevQty = baseQty;
+  const maxQty = Math.ceil(unitBuy / 10); // 최소 $10까지만 (무한 방지)
 
-  // 가격을 점점 낮추면서 추가 주수 발생 시점마다 LOC 추가
-  // 가격 단계: refPrice의 5%씩 낮춤, 최소 refPrice*0.1까지
-  let price = refPrice;
-  const step = refPrice * 0.05; // 5% 단계
-  const minPrice = refPrice * 0.1;
-
-  while (price > minPrice && result.length < 10) {
-    price = Math.round((price - step) * 100) / 100;
+  for (let n = baseQty + 1; n <= maxQty && result.length < 8; n++) {
+    const price = Math.floor(unitBuy / n * 100) / 100; // 내림 (살 수 있는 최대가)
     if (price <= 0) break;
-    const newQty = Math.floor(unitBuy / price);
-    if (newQty > prevQty) {
-      // 추가 주수가 생긴 시점: 그 추가분(1주씩)을 LOC로 걸기
-      const addQty = newQty - prevQty;
-      result.push({ price, qty: addQty });
-      prevQty = newQty;
-    }
+    result.push({ price, qty: 1 }); // 항상 1주씩 추가
   }
 
   return result;
