@@ -528,7 +528,8 @@ function renderMumuDetail(portId) {
       <div style="font-size:12px;font-weight:600;margin-bottom:8px">오늘의 주문 가이드</div>
       <div style="display:flex;gap:6px;margin-bottom:10px">
         <input class="fi" id="mumu-cur-price" type="number" step="0.01" placeholder="오늘 현재가 (USD)" value="${port.lastPrice||''}" style="flex:1">
-        <button class="btn-sm" style="white-space:nowrap;padding:0 12px" onclick="updateMumuPrice('${port.id}')">계산</button>
+        <button id="mumu-price-btn" class="btn-sm" style="padding:0 10px" onclick="autoFillMumuPrice('${port.id}')">🔍</button>
+        <button class="btn-sm" style="padding:0 10px" onclick="updateMumuPrice('${port.id}')">계산</button>
       </div>
       ${buyHTML}
       ${sellHTML}
@@ -868,3 +869,30 @@ function saveMumuSetup() {
   renderMumu();
   toast(mumuSetup.editId ? '✓ 수정됨' : '✓ 포트폴리오 생성됨');
 }
+
+// ── SOXL/TQQQ 현재가 자동 조회 ────────────────────
+async function fetchMumuPrice(ticker) {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`;
+    const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+    const res = await fetch(proxy);
+    const data = await res.json();
+    const parsed = JSON.parse(data.contents);
+    const price = parsed?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    return price || null;
+  } catch(e) { return null; }
+}
+
+async function autoFillMumuPrice(portId) {
+  const port = mumuList.find(p => p.id === portId);
+  if (!port) return;
+  const btn = document.getElementById('mumu-price-btn');
+  if (btn) { btn.textContent = '...'; btn.disabled = true; }
+  const price = await fetchMumuPrice(port.ticker);
+  if (btn) { btn.textContent = '🔍'; btn.disabled = false; }
+  if (!price) { toast('조회 실패 — 직접 입력'); return; }
+  const input = document.getElementById('mumu-cur-price');
+  if (input) input.value = price.toFixed(2);
+  toast(`✓ ${port.ticker} $${price.toFixed(2)}`);
+}
+
