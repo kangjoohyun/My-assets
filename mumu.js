@@ -546,7 +546,14 @@ function renderMumuDetail(portId) {
         <div style="color:var(--text3)">목표 수익률</div><div style="font-family:var(--mono);text-align:right;color:var(--accent2)">+${port.targetPct}%</div>
         <div style="color:var(--text3)">수수료율</div><div style="font-family:var(--mono);text-align:right">${port.fee}%</div>
         <div style="color:var(--text3)">리버스 발동</div><div style="font-family:var(--mono);text-align:right">T > ${port.splits-1}</div>
+        <div style="color:var(--text3)">현재 사이클</div><div style="font-family:var(--mono);text-align:right">${port.cycleNo||1}회차</div>
       </div>
+    </div>
+
+    <!-- 사이클 관리 -->
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn btn-s" style="flex:1;font-size:12px;color:var(--accent3)" onclick="endCycle('${port.id}','수동 종료')">↻ 사이클 종료 & 새 시작</button>
+      <button class="btn btn-s" style="flex:1;font-size:12px" onclick="showCycleHistory('${port.id}')">📋 이력</button>
     </div>`;
 }
 
@@ -594,15 +601,13 @@ function showMumuMenu(portId) {
     <div class="modal-handle"></div>
     <div class="modal-title">${port.ticker} ${port.nickname||''}</div>
     <button class="btn btn-s" style="margin-bottom:8px" onclick="closeModal();setTimeout(()=>showMumuSetup('${portId}'),200)">설정 수정</button>
-    <button class="btn btn-s" style="margin-bottom:8px;color:var(--accent3)" onclick="closeModal();completeMumu('${portId}')">✓ 완료 처리 (익절/종료)</button>
+    <button class="btn btn-s" style="margin-bottom:8px;color:var(--accent3)" onclick="closeModal();completeMumu('${portId}')">✓ 사이클 종료 & 새 시작</button>
+    <button class="btn btn-s" style="margin-bottom:8px" onclick="closeModal();showCycleHistory('${portId}')">📋 사이클 이력</button>
     <button class="btn btn-d" style="margin-bottom:8px" onclick="closeModal();deleteMumu('${portId}')">포트폴리오 삭제</button>
     <button class="btn btn-s" onclick="closeModal()">취소</button>`);
 }
 function completeMumu(portId) {
-  if (!confirm('완료 처리하시겠습니까?')) return;
-  const port = mumuList.find(p => p.id === portId);
-  if (port) { port.completed = true; port.completedAt = tod(); }
-  saveMumuDB(mumuList); mumuCurId = null; renderMumu(); toast('✓ 완료');
+  endCycle(portId, '수동 종료');
 }
 function deleteMumu(portId) {
   if (!confirm('삭제하시겠습니까?')) return;
@@ -669,6 +674,16 @@ function saveMumuTrade(portId) {
   // delete port.tManual;  // 주석처리: 수동값 유지 원하면 삭제하지 않음
   saveMumuDB(mumuList);
   closeModal();
+
+  // 전량매도 후 보유수량 0 되면 사이클 종료 자동 감지
+  if (type === '매도') {
+    const newHoldings = calcHoldings(port);
+    if (newHoldings === 0) {
+      setTimeout(() => endCycle(portId, '전량매도 완료'), 300);
+      return;
+    }
+  }
+
   renderMumuDetail(portId);
   toast('✓ T: ' + tBefore.toFixed(2) + ' → ' + tAfter.toFixed(2));
 }
@@ -886,3 +901,153 @@ async function autoFillMumuPrice(portId) {
   toast(`✓ ${port.ticker} $${price.toFixed(2)}`);
 }
 
+// ══════════════════════════════════════════════════
+// 사이클 관리
+// ══════════════════════════════════════════════════
+
+function loadCycles() {
+  try { return JSON.parse(localStorage.getItem('mumuCycles') || '[]'); }
+  catch(e) { return []; }
+}
+function saveCycles(c) { localStorage.setItem('mumuCycles', JSON.stringify(c)); }
+
+// 사이클 종료 처리
+function endCycle(portId, reason) {
+  const port = mumuList.find(p => p.id === portId);
+  if (!port) return;
+
+  const T = getT(port);
+  const avg = calcAvgPrice(port);
+  const holdings = calcHoldings(port);
+  const invested = calcInvested(port);
+  const remaining = calcRemaining(port);
+
+  // 매도 총액 계산
+  const sellTotal = (port.trades||[])
+    .filter(t => t.type === '매도')
+    .reduce((s,t) => s + t.price * t.qty, 0);
+  const buyTotal = invested;
+  const profitAmt = sellTotal - buyTotal;
+  const profitPct = buyTotal > 0 ? profitAmt / buyTotal * 100 : 0;
+  const startDate = port.trades?.[0]?.date || port.createdAt || tod();
+  const endDate = tod();
+
+  // 완료된 사이클 저장
+  const cycles = loadCycles();
+  const cycleNo = (cycles.filter(c => c.portId === portId).length) + 1;
+  cycles.push({
+    id: 'cy' + Date.now(),
+    portId,
+    cycleNo,
+    ticker: port.ticker,
+    nickname: port.nickname,
+    version: port.version,
+    seed: port.seed,
+    splits: port.splits,
+    targetPct: port.targetPct,
+    startDate,
+    endDate,
+    reason,
+    trades: [...(port.trades||[])],
+    finalT: T,
+    finalAvg: avg,
+    finalHoldings: holdings,
+    buyTotal,
+    sellTotal,
+    profitAmt,
+    profitPct,
+    remaining
+  });
+  saveCycles(cycles);
+
+  // 사이클 종료 모달
+  openModal(`
+    <div class="modal-handle"></div>
+    <div style="text-align:center;padding:8px 0 16px">
+      <div style="font-size:28px;margin-bottom:6px">🎉</div>
+      <div style="font-size:16px;font-weight:700">사이클 ${cycleNo} 종료</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:3px">${port.ticker} ${port.nickname||''} · ${reason}</div>
+    </div>
+
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+        <div><div style="color:var(--text3)">기간</div><div style="font-family:var(--mono);font-size:11px">${startDate} ~ ${endDate}</div></div>
+        <div><div style="color:var(--text3)">최종 T값</div><div style="font-family:var(--mono);font-weight:600;color:var(--accent)">${T.toFixed(2)}</div></div>
+        <div><div style="color:var(--text3)">총 매수금</div><div style="font-family:var(--mono)">${fmtUSD(buyTotal,2)}</div></div>
+        <div><div style="color:var(--text3)">총 매도금</div><div style="font-family:var(--mono)">${fmtUSD(sellTotal,2)}</div></div>
+        <div><div style="color:var(--text3)">손익</div><div style="font-family:var(--mono);font-weight:600;${profitAmt>=0?'color:var(--accent3)':'color:var(--red)'}">${fmtUSD(profitAmt,2)} (${profitPct>=0?'+':''}${profitPct.toFixed(2)}%)</div></div>
+        <div><div style="color:var(--text3)">거래 건수</div><div style="font-family:var(--mono)">${(port.trades||[]).length}건</div></div>
+        ${holdings > 0 ? `<div style="grid-column:1/-1"><div style="color:var(--accent);font-size:11px">⚠️ 잔여 보유 ${holdings}주 (평단 ${fmtUSD(avg)})</div></div>` : ''}
+      </div>
+    </div>
+
+    <div style="font-size:12px;font-weight:600;margin-bottom:8px">새 사이클 시작 방식</div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer">
+        <input type="radio" name="cycle-mode" value="same" checked style="accent-color:var(--accent)">
+        <div><div style="font-size:12px;font-weight:500">원래 시드 유지 (단리)</div><div style="font-size:10px;color:var(--text3)">시드 $${port.seed.toLocaleString()} 그대로 사용</div></div>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;padding:10px;background:var(--bg3);border-radius:8px;cursor:pointer">
+        <input type="radio" name="cycle-mode" value="compound" style="accent-color:var(--accent)">
+        <div><div style="font-size:12px;font-weight:500">수익 포함 복리</div><div style="font-size:10px;color:var(--text3)">새 시드 $${(port.seed + profitAmt).toFixed(2)}</div></div>
+      </label>
+    </div>
+
+    <button class="btn btn-p" onclick="startNewCycle('${portId}')">새 사이클 시작</button>
+    <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">나중에 시작</button>
+  `);
+
+  // 현재 포트 trades 초기화
+  port.trades = [];
+  delete port.tManual;
+  port.lastPrice = 0;
+  port.recentPrices = [];
+  port.cycleNo = cycleNo + 1;
+  saveMumuDB(mumuList);
+}
+
+function startNewCycle(portId) {
+  const port = mumuList.find(p => p.id === portId);
+  if (!port) return;
+
+  const mode = document.querySelector('input[name="cycle-mode"]:checked')?.value || 'same';
+  if (mode === 'compound') {
+    const cycles = loadCycles();
+    const lastCycle = cycles.filter(c => c.portId === portId).pop();
+    if (lastCycle) {
+      port.seed = Math.round((port.seed + lastCycle.profitAmt) * 100) / 100;
+    }
+  }
+
+  saveMumuDB(mumuList);
+  closeModal();
+  mumuCurId = portId;
+  renderMumu();
+  toast(`✓ 새 사이클 ${port.cycleNo||2} 시작!`);
+}
+
+// 사이클 이력 보기
+function showCycleHistory(portId) {
+  const cycles = loadCycles().filter(c => c.portId === portId);
+  if (!cycles.length) { toast('완료된 사이클 없음'); return; }
+
+  let html = `<div class="modal-handle"></div><div class="modal-title">사이클 이력</div>`;
+  cycles.slice().reverse().forEach(cy => {
+    html += `
+      <div style="background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;font-weight:600">사이클 ${cy.cycleNo}</span>
+          <span style="font-family:var(--mono);font-size:12px;font-weight:600;${cy.profitAmt>=0?'color:var(--accent3)':'color:var(--red)'}">${cy.profitPct>=0?'+':''}${cy.profitPct.toFixed(2)}%</span>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:4px">${cy.startDate} ~ ${cy.endDate} · ${cy.reason}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11px">
+          <div style="color:var(--text3)">매수</div><div style="font-family:var(--mono)">${fmtUSD(cy.buyTotal,0)}</div>
+          <div style="color:var(--text3)">매도</div><div style="font-family:var(--mono)">${fmtUSD(cy.sellTotal,0)}</div>
+          <div style="color:var(--text3)">손익</div><div style="font-family:var(--mono);${cy.profitAmt>=0?'color:var(--accent3)':'color:var(--red)'}">${fmtUSD(cy.profitAmt,2)}</div>
+          <div style="color:var(--text3)">거래</div><div style="font-family:var(--mono)">${cy.trades.length}건</div>
+        </div>
+      </div>`;
+  });
+  html += `<button class="btn btn-s" onclick="closeModal()">닫기</button>`;
+  openModal(html);
+}
