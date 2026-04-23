@@ -294,39 +294,55 @@ function fmtUSD(n, d=2) {
 }
 
 // ── 렌더 메인 ──────────────────────────────────────
+let mumuSubTab = 'active'; // 'active' | 'history'
+
 function renderMumu() {
   mumuList = loadMumuDB();
   const page = document.getElementById('page-mumu');
   if (!page) return;
   page.style.padding = '14px 14px 0';
 
-  if (!mumuList.length) {
-    page.innerHTML = `
-      <div class="empty" style="padding:3rem 1rem">
-        <div style="font-size:36px;margin-bottom:8px">∞</div>
-        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">무한매수법 포트폴리오</div>
-        <div>아직 포트폴리오가 없습니다</div>
-      </div>
-      <button class="btn btn-p" style="margin:0 0 12px" onclick="showMumuSetup()">＋ 새 포트폴리오 시작</button>`;
+  // 상세 화면이면 서브탭 없이 바로 렌더
+  if (mumuCurId) {
+    renderMumuDetail(mumuCurId);
     return;
   }
 
-  if (mumuCurId) {
-    renderMumuDetail(mumuCurId);
-  } else {
-    renderMumuList();
-  }
+  // 서브탭 헤더
+  const allCycles = loadCycles();
+  page.innerHTML = `
+    <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:14px">
+      <div onclick="mumuSubTab='active';renderMumu()" style="flex:1;padding:9px 4px;font-size:12px;text-align:center;cursor:pointer;border-bottom:2px solid ${mumuSubTab==='active'?'var(--accent)':'transparent'};color:${mumuSubTab==='active'?'var(--accent)':'var(--text3)'}">
+        진행중 ${mumuList.length ? '('+mumuList.length+')' : ''}
+      </div>
+      <div onclick="mumuSubTab='history';renderMumu()" style="flex:1;padding:9px 4px;font-size:12px;text-align:center;cursor:pointer;border-bottom:2px solid ${mumuSubTab==='history'?'var(--accent)':'transparent'};color:${mumuSubTab==='history'?'var(--accent)':'var(--text3)'}">
+        이력 ${allCycles.length ? '('+allCycles.length+')' : ''}
+      </div>
+    </div>
+    <div id="mumu-subtab-content"></div>`;
+
+  if (mumuSubTab === 'active') renderMumuList();
+  else renderMumuHistory();
 }
 
 function renderMumuList() {
-  const page = document.getElementById('page-mumu');
   let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-    <div class="slbl" style="margin:0">포트폴리오 목록</div>
+    <div class="slbl" style="margin:0">진행중 포트폴리오</div>
     <button class="btn-sm" onclick="showMumuSetup()">＋ 추가</button>
   </div>`;
 
+  if (!mumuList.length) {
+    html += `<div class="empty" style="padding:2rem 1rem">
+      <div style="font-size:36px;margin-bottom:8px">∞</div>
+      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">진행중인 포트폴리오 없음</div>
+      <div>새 포트폴리오를 시작해보세요</div>
+    </div>
+    <button class="btn btn-p" style="margin-bottom:12px" onclick="showMumuSetup()">＋ 새 포트폴리오 시작</button>`;
+    document.getElementById('mumu-subtab-content').innerHTML = html;
+    return;
+  }
+
   mumuList.forEach(port => {
-    const portCycles = loadCycles().filter(c => c.portId === port.id);
     const T = getT(port);
     const avg = calcAvgPrice(port);
     const holdings = calcHoldings(port);
@@ -357,11 +373,161 @@ function renderMumuList() {
         <div><div style="color:var(--text3)">★%</div><div style="font-family:var(--mono);font-weight:600;color:var(--accent2)">${starPct.toFixed(2)}%</div></div>
         <div><div style="color:var(--text3)">★가격</div><div style="font-family:var(--mono);font-weight:600;color:var(--accent3)">${starPrice>0?fmtUSD(starPrice):'—'}</div></div>
       </div>
-      ${portCycles.length > 0 ? '<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px"><button class="btn-sm" style="width:100%;font-size:11px;color:var(--accent2)" onclick="event.stopPropagation();showCycleHistory(\''+port.id+'\')">📋 완료된 사이클 이력 '+portCycles.length+'건 보기</button></div>' : ''}
+
     </div>`;
   });
 
-  page.innerHTML = html;
+  document.getElementById('mumu-subtab-content').innerHTML = html;
+}
+
+function renderMumuHistory() {
+  const allCycles = loadCycles();
+  const container = document.getElementById('mumu-subtab-content');
+  if (!container) return;
+
+  if (!allCycles.length) {
+    container.innerHTML = `
+      <div class="empty" style="padding:3rem 1rem">
+        <div style="font-size:36px;margin-bottom:8px">📋</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px">완료된 사이클 없음</div>
+        <div>사이클이 종료되면 여기에 기록됩니다</div>
+      </div>`;
+    return;
+  }
+
+  // 전체 요약
+  const totalProfit = allCycles.reduce((s, cy) => s + cy.profitAmt, 0);
+  const winCount = allCycles.filter(cy => cy.profitAmt >= 0).length;
+  const totalBuy = allCycles.reduce((s, cy) => s + cy.buyTotal, 0);
+  const totalSell = allCycles.reduce((s, cy) => s + cy.sellTotal, 0);
+
+  let html = `
+    <div class="stat-grid" style="margin-bottom:12px">
+      <div class="stat-card span2" style="border-color:${totalProfit>=0?'rgba(60,184,120,.3)':'rgba(232,84,68,.3)'};background:${totalProfit>=0?'rgba(60,184,120,.05)':'rgba(232,84,68,.05)'}">
+        <div class="sc-lbl">누적 실현 손익</div>
+        <div class="sc-val" style="color:${totalProfit>=0?'var(--accent3)':'var(--red)'}">${totalProfit>=0?'+':''}${fmtUSD(totalProfit,2)}</div>
+        <div class="sc-sub">${allCycles.length}사이클 완료 · 승률 ${Math.round(winCount/allCycles.length*100)}%</div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-lbl">총 매수금</div>
+        <div class="sc-val" style="font-size:17px">${fmtUSD(totalBuy,0)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="sc-lbl">총 매도금</div>
+        <div class="sc-val" style="font-size:17px">${fmtUSD(totalSell,0)}</div>
+      </div>
+    </div>`;
+
+  // 종목별 그룹핑
+  const grouped = {};
+  allCycles.forEach(cy => {
+    const key = cy.portId;
+    if (!grouped[key]) grouped[key] = { label: cy.ticker + (cy.nickname?' · '+cy.nickname:''), cycles: [] };
+    grouped[key].cycles.push(cy);
+  });
+
+  Object.values(grouped).forEach(group => {
+    const gProfit = group.cycles.reduce((s,cy)=>s+cy.profitAmt, 0);
+    const gWin = group.cycles.filter(cy=>cy.profitAmt>=0).length;
+
+    html += `
+      <div class="tbl" style="margin-bottom:10px">
+        <div style="padding:10px 12px;background:var(--bg3);border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-size:13px;font-weight:700">${group.label}</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:2px">${group.cycles.length}사이클 · 승률 ${Math.round(gWin/group.cycles.length*100)}%</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${gProfit>=0?'var(--accent3)':'var(--red)'}">${gProfit>=0?'+':''}${fmtUSD(gProfit,2)}</div>
+              <div style="font-size:10px;color:var(--text3)">누적 손익</div>
+            </div>
+          </div>
+        </div>
+        ${group.cycles.slice().reverse().map(cy => {
+          const days = cy.startDate && cy.endDate
+            ? Math.round((new Date(cy.endDate)-new Date(cy.startDate))/(1000*60*60*24))
+            : 0;
+          return `
+          <div style="padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer" onclick="showCycleDetail('${cy.id}')">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start">
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+                  <span style="font-size:12px;font-weight:600">사이클 ${cy.cycleNo}</span>
+                  <span style="font-size:9px;background:${cy.profitAmt>=0?'rgba(60,184,120,.15)':'rgba(232,84,68,.15)'};color:${cy.profitAmt>=0?'var(--accent3)':'var(--red)'};padding:1px 6px;border-radius:10px">${cy.reason}</span>
+                </div>
+                <div style="font-size:10px;color:var(--text3)">${cy.startDate} ~ ${cy.endDate} (${days}일)</div>
+                <div style="font-size:10px;color:var(--text2);margin-top:2px">매수 ${fmtUSD(cy.buyTotal,0)} · ${cy.trades.length}건 · T=${cy.finalT.toFixed(2)}</div>
+              </div>
+              <div style="text-align:right;margin-left:10px">
+                <div style="font-family:var(--mono);font-size:14px;font-weight:700;color:${cy.profitAmt>=0?'var(--accent3)':'var(--red)'}">${cy.profitAmt>=0?'+':''}${fmtUSD(cy.profitAmt,2)}</div>
+                <div style="font-size:10px;color:var(--text3)">${cy.profitPct>=0?'+':''}${cy.profitPct.toFixed(2)}%</div>
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  });
+
+  // 삭제 버튼
+  html += `<button class="btn btn-d" style="margin-top:4px;font-size:12px" onclick="clearAllCycles()">이력 전체 삭제</button>`;
+  container.innerHTML = html;
+}
+
+function showCycleDetail(cycleId) {
+  const cy = loadCycles().find(c => c.id === cycleId);
+  if (!cy) return;
+  const days = cy.startDate && cy.endDate
+    ? Math.round((new Date(cy.endDate)-new Date(cy.startDate))/(1000*60*60*24))
+    : 0;
+
+  const tradesHTML = [...cy.trades].reverse().map((tr, i) => {
+    const no = cy.trades.length - i;
+    return `<div style="display:grid;grid-template-columns:24px 1fr auto auto auto;gap:4px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px">
+      <span style="color:var(--text3);font-family:var(--mono);font-size:9px">#${no}</span>
+      <span style="color:var(--text2)">${tr.date.slice(5)}</span>
+      <span class="badge ${tr.type==='매수'?'badge-red':'badge-blue'}" style="font-size:9px">${tr.type} ${tr.tTag||''}</span>
+      <span style="font-family:var(--mono)">${fmtUSD(tr.price)}</span>
+      <span style="font-family:var(--mono)">${tr.qty}주</span>
+    </div>`;
+  }).join('');
+
+  openModal(`
+    <div class="modal-handle"></div>
+    <div class="modal-title">${cy.ticker} ${cy.nickname||''} · 사이클 ${cy.cycleNo}</div>
+    <div style="background:var(--bg3);border-radius:10px;padding:12px;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+        <div><div style="color:var(--text3)">기간</div><div style="font-family:var(--mono);font-size:11px">${cy.startDate}<br>~ ${cy.endDate} (${days}일)</div></div>
+        <div><div style="color:var(--text3)">종료 사유</div><div style="font-weight:600">${cy.reason}</div></div>
+        <div><div style="color:var(--text3)">최종 T값</div><div style="font-family:var(--mono);font-weight:600;color:var(--accent)">${cy.finalT.toFixed(4)}</div></div>
+        <div><div style="color:var(--text3)">거래 건수</div><div style="font-family:var(--mono)">${cy.trades.length}건</div></div>
+        <div><div style="color:var(--text3)">총 매수금</div><div style="font-family:var(--mono)">${fmtUSD(cy.buyTotal,2)}</div></div>
+        <div><div style="color:var(--text3)">총 매도금</div><div style="font-family:var(--mono)">${fmtUSD(cy.sellTotal,2)}</div></div>
+        <div><div style="color:var(--text3)">실현 손익</div><div style="font-family:var(--mono);font-weight:700;color:${cy.profitAmt>=0?'var(--accent3)':'var(--red)'}">${cy.profitAmt>=0?'+':''}${fmtUSD(cy.profitAmt,2)}</div></div>
+        <div><div style="color:var(--text3)">수익률</div><div style="font-family:var(--mono);font-weight:700;color:${cy.profitPct>=0?'var(--accent3)':'var(--red)'}">${cy.profitPct>=0?'+':''}${cy.profitPct.toFixed(2)}%</div></div>
+      </div>
+    </div>
+    <div style="font-size:11px;font-weight:600;margin-bottom:6px">거래 내역 (${cy.trades.length}건)</div>
+    <div style="max-height:200px;overflow-y:auto">${tradesHTML}</div>
+    <button class="btn btn-s" style="margin-top:12px" onclick="closeModal()">닫기</button>
+    <button class="btn btn-d" style="margin-top:8px;font-size:12px" onclick="deleteCycle('${cy.id}')">이 사이클 삭제</button>
+  `);
+}
+
+function deleteCycle(cycleId) {
+  if (!confirm('이 사이클 이력을 삭제할까요?')) return;
+  const cycles = loadCycles().filter(c => c.id !== cycleId);
+  saveCycles(cycles);
+  closeModal();
+  renderMumu();
+  toast('삭제됨');
+}
+
+function clearAllCycles() {
+  if (!confirm('모든 사이클 이력을 삭제할까요?')) return;
+  saveCycles([]);
+  renderMumu();
+  toast('이력 전체 삭제됨');
 }
 
 function renderMumuDetail(portId) {
