@@ -1,4 +1,3 @@
-
 // ══════════════════════════════════════════════════
 // 무한매수법 V4.0 — 정확한 로직 구현
 // ══════════════════════════════════════════════════
@@ -16,8 +15,9 @@ let mumuCurId = null;
 function calcStarPct(ticker, splits, T) {
   const isSoxl = ticker === 'SOXL';
   if (splits === 40) return isSoxl ? (20 - T) : (15 - 0.75 * T);
+  if (splits === 30) return isSoxl ? (20 - (4/3) * T) : (15 - T);  // 30분할
   if (splits === 20) return isSoxl ? (20 - 2 * T) : (15 - 1.5 * T);
-  // 기타 분할: SOXL 기준으로 비례 계산
+  // 기타: 비례 계산
   return isSoxl ? (20 - (40 / splits) * T) : (15 - (30 / splits) * T);
 }
 
@@ -26,6 +26,7 @@ function calcStarPct(ticker, splits, T) {
 function calcTFromTrades(port) {
   if (!port.trades || !port.trades.length) return 0;
   let T = 0;
+  let holdings = 0; // 실시간 보유수량 추적
   const splits = port.splits;
   port.trades.forEach(tr => {
     if (tr.type === '매수') {
@@ -33,13 +34,24 @@ function calcTFromTrades(port) {
       else if (tr.tTag === 'T+0.5') T += 0.5;
       else if (tr.tTag === 'T+0.25') T += 0.25;
       else T += 1; // 기본값
+      holdings += tr.qty;
     } else if (tr.type === '매도') {
-      if (tr.tTag === '퀴터매도') T = T * 0.75;
-      else if (tr.tTag === 'MOC') {
-        // 리버스 첫날 MOC 매도
+      if (tr.tTag === '퀴터매도') {
+        // 퀴터매도: T × 0.75
+        T = T * 0.75;
+      } else if (tr.tTag === 'MOC') {
+        // 리버스 첫날 MOC: 전체 기준 비율
         const divN = splits === 20 ? 10 : 20;
-        T = T * (1 - 1/divN * tr.qty / (port._holdings || 1));
+        T = T * (1 - 1 / divN);
+      } else {
+        // 일반 매도: 매도 비율만큼 T 감소
+        // T × (1 - 매도수량/보유수량)
+        if (holdings > 0 && tr.qty > 0) {
+          const ratio = Math.min(tr.qty / holdings, 1);
+          T = T * (1 - ratio);
+        }
       }
+      holdings = Math.max(0, holdings - tr.qty);
     }
   });
   return Math.round(T * 1000000) / 1000000;
@@ -314,6 +326,7 @@ function renderMumuList() {
   </div>`;
 
   mumuList.forEach(port => {
+    const portCycles = loadCycles().filter(c => c.portId === port.id);
     const T = getT(port);
     const avg = calcAvgPrice(port);
     const holdings = calcHoldings(port);
@@ -344,6 +357,7 @@ function renderMumuList() {
         <div><div style="color:var(--text3)">★%</div><div style="font-family:var(--mono);font-weight:600;color:var(--accent2)">${starPct.toFixed(2)}%</div></div>
         <div><div style="color:var(--text3)">★가격</div><div style="font-family:var(--mono);font-weight:600;color:var(--accent3)">${starPrice>0?fmtUSD(starPrice):'—'}</div></div>
       </div>
+      ${portCycles.length > 0 ? '<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px"><button class="btn-sm" style="width:100%;font-size:11px;color:var(--accent2)" onclick="event.stopPropagation();showCycleHistory(\''+port.id+'\')">📋 완료된 사이클 이력 '+portCycles.length+'건 보기</button></div>' : ''}
     </div>`;
   });
 
@@ -633,16 +647,18 @@ function showMumuTradeModal(portId) {
       <div class="form-row"><div class="form-lbl">체결가 (USD)</div><input class="fi" id="mt-price" type="number" step="0.01" placeholder="0.00"></div>
       <div class="form-row"><div class="form-lbl">수량 (주)</div><input class="fi" id="mt-qty" type="number" placeholder="0"></div>
     </div>
-    <div class="form-row"><div class="form-lbl">T 태그</div>
-      <select class="fsel" id="mt-tag">
+    <div class="form-row"><div class="form-lbl">T 태그 <span style="font-size:9px;color:var(--text3)" id="mt-tag-hint"></span></div>
+      <select class="fsel" id="mt-tag" onchange="updateTTagHint()">
         <option value="T+1">T+1 (1회 전체 매수)</option>
         <option value="T+0.5" selected>T+0.5 (절반 매수)</option>
         <option value="T+0.25">T+0.25 (쿼터 매수)</option>
-        <option value="퀴터매도">퀴터매도 (T×0.75)</option>
-        <option value="MOC">MOC (리버스 첫날)</option>
-        <option value="">태그 없음</option>
+        <option value="퀴터매도">퀴터매도 (T×0.75) — 매도</option>
+        <option value="MOC">MOC (리버스 첫날) — 매도</option>
+        <option value="지정가매도">지정가매도 (비율만큼 T감소) — 매도</option>
+        <option value="전량매도">전량매도 (T→0) — 매도</option>
       </select>
     </div>
+    <div id="mt-tag-preview" style="font-size:11px;color:var(--accent);font-family:var(--mono);margin:-6px 0 10px;padding:0 2px"></div>
     <button class="btn btn-p" onclick="saveMumuTrade('${portId}')">저장</button>
     <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">취소</button>`);
 }
@@ -659,6 +675,7 @@ function saveMumuTrade(portId) {
 
   // T값 계산 (거래 후)
   let tBefore = getT(port);
+  let holdingsBefore = calcHoldings(port);
   let tAfter = tBefore;
   if (type === '매수') {
     if (tTag === 'T+1') tAfter = tBefore + 1;
@@ -666,7 +683,21 @@ function saveMumuTrade(portId) {
     else if (tTag === 'T+0.25') tAfter = tBefore + 0.25;
     else tAfter = tBefore + 1;
   } else {
-    if (tTag === '퀴터매도') tAfter = tBefore * 0.75;
+    // 매도: tTag에 따라 T 계산
+    if (tTag === '퀴터매도') {
+      tAfter = tBefore * 0.75;
+    } else if (tTag === 'MOC') {
+      const divN = port.splits === 20 ? 10 : 20;
+      tAfter = tBefore * (1 - 1 / divN);
+    } else if (tTag === '지정가매도' || tTag === '') {
+      // 일반/지정가 매도: 보유 비율만큼 T 감소
+      if (holdingsBefore > 0 && qty > 0) {
+        const ratio = Math.min(qty / holdingsBefore, 1);
+        tAfter = tBefore * (1 - ratio);
+      }
+    } else if (tTag === '전량매도') {
+      tAfter = 0;
+    }
   }
 
   port.trades.push({ id:'t'+Date.now(), date:document.getElementById('mt-date').value, type, price, qty, tTag, tAfter: Math.round(tAfter*1000000)/1000000, amount:price*qty });
@@ -821,7 +852,7 @@ function showMumuStep(step) {
       <div style="margin-bottom:12px">
         <div class="form-lbl" style="margin-bottom:8px">분할 일수</div>
         <div style="display:flex;gap:8px">
-          ${[20,40].map(d=>`<div onclick="mumuSetup.splits=${d};showMumuStep(5)" style="flex:1;border:2px solid ${mumuSetup.splits===d?'var(--accent2)':'var(--border2)'};border-radius:10px;padding:14px;text-align:center;cursor:pointer;font-size:16px;font-weight:700;background:${mumuSetup.splits===d?'rgba(74,158,255,.06)':'var(--bg3)'}">${d}일</div>`).join('')}
+          ${[20,30,40].map(d=>`<div onclick="mumuSetup.splits=${d};showMumuStep(5)" style="flex:1;border:2px solid ${mumuSetup.splits===d?'var(--accent2)':'var(--border2)'};border-radius:10px;padding:12px;text-align:center;cursor:pointer;font-size:15px;font-weight:700;background:${mumuSetup.splits===d?'rgba(74,158,255,.06)':'var(--bg3)'}">${d}일</div>`).join('')}
         </div>
       </div>
       <div class="form-row"><div class="form-lbl">목표 수익률 (%)</div><input class="fi" id="mu-target" type="number" value="${mumuSetup.targetPct}" placeholder="20" step="0.5"></div>
@@ -923,12 +954,30 @@ function endCycle(portId, reason) {
   const remaining = calcRemaining(port);
 
   // 매도 총액 계산
-  const sellTotal = (port.trades||[])
-    .filter(t => t.type === '매도')
-    .reduce((s,t) => s + t.price * t.qty, 0);
-  const buyTotal = invested;
-  const profitAmt = sellTotal - buyTotal;
-  const profitPct = buyTotal > 0 ? profitAmt / buyTotal * 100 : 0;
+  // 정확한 수익 계산: 매도금액 - 매도한 주의 원가
+  const allTrades = port.trades || [];
+  let totalBuyAmt = 0; // 실제 총 매수금
+  let costBasis = 0;   // 현재 보유분 원가
+  let holdingsTrack = 0;
+  allTrades.forEach(t => {
+    if (t.type === '매수') {
+      totalBuyAmt += t.price * t.qty;
+      costBasis += t.price * t.qty;
+      holdingsTrack += t.qty;
+    } else {
+      // 매도한 주의 평단 원가만큼 costBasis 감소
+      if (holdingsTrack > 0) {
+        const avgCost = costBasis / holdingsTrack;
+        costBasis -= avgCost * t.qty;
+        holdingsTrack = Math.max(0, holdingsTrack - t.qty);
+      }
+    }
+  });
+  const sellTotal = allTrades.filter(t => t.type === '매도').reduce((s,t) => s + t.price * t.qty, 0);
+  const soldCost = totalBuyAmt - costBasis; // 매도한 주의 원가
+  const profitAmt = sellTotal - soldCost;   // 실현 손익
+  const buyTotal = totalBuyAmt;
+  const profitPct = soldCost > 0 ? profitAmt / soldCost * 100 : 0;
   const startDate = port.trades?.[0]?.date || port.createdAt || tod();
   const endDate = tod();
 
@@ -1050,4 +1099,29 @@ function showCycleHistory(portId) {
   });
   html += `<button class="btn btn-s" onclick="closeModal()">닫기</button>`;
   openModal(html);
+}
+
+function updateTTagHint() {
+  const tag = document.getElementById('mt-tag')?.value;
+  const type = document.getElementById('mt-type')?.value;
+  const qty = parseInt(document.getElementById('mt-qty')?.value) || 0;
+  const portId = mumuCurId;
+  if (!portId) return;
+  const port = mumuList.find(p => p.id === portId);
+  if (!port) return;
+  const T = getT(port);
+  const holdings = calcHoldings(port);
+  let tAfter = T;
+  if (type === '매수') {
+    if (tag === 'T+1') tAfter = T + 1;
+    else if (tag === 'T+0.5') tAfter = T + 0.5;
+    else if (tag === 'T+0.25') tAfter = T + 0.25;
+  } else {
+    if (tag === '퀴터매도') tAfter = T * 0.75;
+    else if (tag === 'MOC') tAfter = T * (1 - 1/(port.splits===20?10:20));
+    else if (tag === '지정가매도' && holdings > 0 && qty > 0) tAfter = T * (1 - Math.min(qty/holdings, 1));
+    else if (tag === '전량매도') tAfter = 0;
+  }
+  const el = document.getElementById('mt-tag-preview');
+  if (el) el.textContent = T > 0 ? `T: ${T.toFixed(2)} → ${tAfter.toFixed(2)}` : '';
 }
