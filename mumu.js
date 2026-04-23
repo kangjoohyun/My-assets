@@ -1,3 +1,4 @@
+
 // ══════════════════════════════════════════════════
 // 무한매수법 V4.0 — 정확한 로직 구현
 // ══════════════════════════════════════════════════
@@ -469,8 +470,10 @@ function renderMumuHistory() {
       </div>`;
   });
 
-  // 삭제 버튼
-  html += `<button class="btn btn-d" style="margin-top:4px;font-size:12px" onclick="clearAllCycles()">이력 전체 삭제</button>`;
+  // 버튼들
+  html += `
+    <button class="btn btn-d" style="margin-top:4px;font-size:12px" onclick="clearAllCycles()">이력 전체 삭제</button>
+    <button class="btn btn-s" style="margin-top:8px;font-size:11px;color:var(--accent)" onclick="fixCycleData()">🔧 사이클1 데이터 수정 (임시)</button>`;
   container.innerHTML = html;
 }
 
@@ -1297,4 +1300,45 @@ function updateTTagHint() {
   }
   const el = document.getElementById('mt-tag-preview');
   if (el) el.textContent = T > 0 ? `T: ${T.toFixed(2)} → ${tAfter.toFixed(2)}` : '';
+}
+
+// ── 임시: 사이클 이력 수동 수정 ──────────────────
+function fixCycleData() {
+  const corrected = [{
+    id: 'cy_soxl_1',
+    portId: 'mu_soxl_init',
+    cycleNo: 1,
+    ticker: 'SOXL',
+    nickname: '메리츠1',
+    version: 'v4.0',
+    seed: 15000,
+    splits: 40,
+    targetPct: 20,
+    startDate: '2026-04-10',
+    endDate: '2026-04-22',
+    reason: '수동 종료',
+    trades: [
+      {id:'tr1',date:'2026-04-10',type:'매수',price:76.39,qty:4,tTag:'T+1',amount:305.56},
+      {id:'tr2',date:'2026-04-13',type:'매수',price:81.25,qty:2,tTag:'T+0.5',amount:162.50},
+      {id:'tr3',date:'2026-04-14',type:'매수',price:85.31,qty:2,tTag:'T+0.5',amount:170.62},
+      {id:'tr4',date:'2026-04-15',type:'매수',price:85.96,qty:2,tTag:'T+0.5',amount:171.92},
+      {id:'tr5',date:'2026-04-16',type:'매수',price:88.37,qty:2,tTag:'T+0.5',amount:176.74},
+      {id:'tr6',date:'2026-04-17',type:'매수',price:94.68,qty:2,tTag:'T+0.5',amount:189.36},
+      {id:'tr7',date:'2026-04-20',type:'매수',price:95.94,qty:2,tTag:'T+0.5',amount:191.88},
+      {id:'tr8',date:'2026-04-21',type:'매수',price:98.09,qty:2,tTag:'T+0.5',amount:196.18},
+      {id:'tr9',date:'2026-04-22',type:'매도',price:103.68,qty:4,tTag:'퀴터매도',amount:414.72},
+      {id:'tr10',date:'2026-04-22',type:'매도',price:105.64,qty:14,tTag:'지정가매도',amount:1478.96}
+    ],
+    finalT: 4.5,
+    finalAvg: 75.82,
+    finalHoldings: 0,
+    buyTotal: 1364.76,
+    sellTotal: 1893.68,
+    profitAmt: 528.92,
+    profitPct: 38.76,
+    remaining: 13635.24
+  }];
+  saveCycles(corrected);
+  renderMumu();
+  toast('✓ 사이클 이력 수정 완료!');
 }
