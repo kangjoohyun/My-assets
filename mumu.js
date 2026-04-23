@@ -649,13 +649,12 @@ function showMumuTradeModal(portId) {
     </div>
     <div class="form-row"><div class="form-lbl">T 태그 <span style="font-size:9px;color:var(--text3)" id="mt-tag-hint"></span></div>
       <select class="fsel" id="mt-tag" onchange="updateTTagHint()">
-        <option value="T+1">T+1 (1회 전체 매수)</option>
-        <option value="T+0.5" selected>T+0.5 (절반 매수)</option>
-        <option value="T+0.25">T+0.25 (쿼터 매수)</option>
-        <option value="퀴터매도">퀴터매도 (T×0.75) — 매도</option>
-        <option value="MOC">MOC (리버스 첫날) — 매도</option>
-        <option value="지정가매도">지정가매도 (비율만큼 T감소) — 매도</option>
-        <option value="전량매도">전량매도 (T→0) — 매도</option>
+        <option value="T+1">매수 T+1 (1회 전체)</option>
+        <option value="T+0.5" selected>매수 T+0.5 (절반)</option>
+        <option value="퀴터매도">매도 — 퀴터매도 (T×0.75)</option>
+        <option value="지정가매도">매도 — 지정가 (비율만큼 T감소)</option>
+        <option value="전량매도">매도 — 전량매도 (T→0)</option>
+        <option value="MOC">매도 — MOC (리버스 첫날)</option>
       </select>
     </div>
     <div id="mt-tag-preview" style="font-size:11px;color:var(--accent);font-family:var(--mono);margin:-6px 0 10px;padding:0 2px"></div>
@@ -758,9 +757,11 @@ function showMumuSmsInput(portId) {
     <textarea class="fi" id="mumu-sms" rows="7" placeholder="[메리츠증권] 해외주식 주문체결 안내..." style="resize:vertical;font-size:12px;line-height:1.6"></textarea>
     <div class="form-row" style="margin-top:8px"><div class="form-lbl">T 태그</div>
       <select class="fsel" id="mumu-sms-tag">
-        <option value="T+0.5" selected>T+0.5 (절반 매수)</option>
-        <option value="T+1">T+1 (1회 전체)</option>
-        <option value="T+0.25">T+0.25 (쿼터)</option>
+        <option value="T+0.5" selected>매수 T+0.5 (절반)</option>
+        <option value="T+1">매수 T+1 (1회 전체)</option>
+        <option value="퀴터매도">매도 — 퀴터매도 (T×0.75)</option>
+        <option value="지정가매도">매도 — 지정가 (비율만큼 T감소)</option>
+        <option value="전량매도">매도 — 전량매도 (T→0)</option>
       </select>
     </div>
     <button class="btn btn-p" style="margin-top:4px" onclick="parseMumuSms('${portId}')">파싱 →</button>
@@ -780,11 +781,18 @@ function parseMumuSms(portId) {
   parsed.forEach(r => {
     if (!r.price || r.currency !== 'USD') return; // USD만
     let tBefore = getT(port);
+    let holdingsBefore = calcHoldings(port);
     let tAfter = tBefore;
     if (r.type === '매수') {
       if (tTag === 'T+1') tAfter = tBefore + 1;
       else if (tTag === 'T+0.5') tAfter = tBefore + 0.5;
-      else if (tTag === 'T+0.25') tAfter = tBefore + 0.25;
+      else tAfter = tBefore + 0.5; // 기본값
+    } else {
+      // 매도
+      if (tTag === '퀴터매도') tAfter = tBefore * 0.75;
+      else if (tTag === 'MOC') tAfter = tBefore * (1 - 1/(port.splits===20?10:20));
+      else if (tTag === '지정가매도' && holdingsBefore > 0) tAfter = tBefore * (1 - Math.min(r.qty/holdingsBefore, 1));
+      else if (tTag === '전량매도') tAfter = 0;
     }
     port.trades.push({ id:'t'+Date.now()+Math.random(), date:r.date, type:r.type, price:r.price, qty:r.qty, tTag, tAfter:Math.round(tAfter*1000000)/1000000, amount:r.price*r.qty });
     count++;
@@ -1115,7 +1123,6 @@ function updateTTagHint() {
   if (type === '매수') {
     if (tag === 'T+1') tAfter = T + 1;
     else if (tag === 'T+0.5') tAfter = T + 0.5;
-    else if (tag === 'T+0.25') tAfter = T + 0.25;
   } else {
     if (tag === '퀴터매도') tAfter = T * 0.75;
     else if (tag === 'MOC') tAfter = T * (1 - 1/(port.splits===20?10:20));
