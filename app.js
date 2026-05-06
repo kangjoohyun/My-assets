@@ -81,8 +81,53 @@ function fmtPct(n, d=1) { if (!n && n!==0) return ''; return (n>0?'+':'') + n.to
 function tod() { return new Date().toISOString().slice(0,10); }
 function thisMonth() { return new Date().toISOString().slice(0,7); }
 function pctCls(n) { return n > 0.5 ? 'pos' : n < -0.5 ? 'neg' : 'neu'; }
-function hval(h) { return h.qty * (h.ticker==='CASH' ? h.avgPrice : h.curPrice) || 0; }
+const USD_KRW = 1484;
+// currency 필드: 'USD' | 'KRW' (없으면 티커로 자동 판별)
+function isUSD(h) {
+  if (!h || !h.ticker || h.ticker === 'CASH') return false;
+  if (h.currency) return h.currency === 'USD';
+  return /^[A-Za-z]+$/.test(h.ticker);
+}
+// 원화 평가금액 (총자산 계산용 — 항상 KRW)
+function hval(h) {
+  if (!h) return 0;
+  const price = h.ticker === 'CASH' ? h.avgPrice : h.curPrice;
+  const krw = isUSD(h) ? price * USD_KRW : price;
+  return (h.qty * krw) || 0;
+}
 function acctVal(a) { return a.holdings.reduce((s,h) => s + hval(h), 0); }
+// 평가금액 표시: USD종목은 달러, 나머지는 원화
+function fmtHVal(h) {
+  if (isUSD(h)) {
+    const usd = h.qty * h.curPrice;
+    return '$' + (usd >= 1000 ? Math.round(usd).toLocaleString('en-US') : usd.toFixed(0));
+  }
+  return fmtW(hval(h));
+}
+// 단가 표시
+function fmtUnitPrice(h, val) {
+  if (isUSD(h)) return '$' + Number(val).toFixed(2);
+  return fmtW(val);
+}
+// 기존 데이터 마이그레이션: 영문 티커 종목의 원화 단가를 달러로 변환
+function migrateUSDHoldings() {
+  let changed = false;
+  DB.accounts.forEach(a => {
+    a.holdings.forEach(h => {
+      if (h.ticker && h.ticker !== 'CASH' && /^[A-Za-z]+$/.test(h.ticker) && !h.currency) {
+        h.currency = 'USD';
+        // 기존 원화 단가 → 달러 변환 (1484 기준)
+        if (h.avgPrice > 100) h.avgPrice = Math.round(h.avgPrice / USD_KRW * 100) / 100;
+        if (h.curPrice > 100) h.curPrice = Math.round(h.curPrice / USD_KRW * 100) / 100;
+        changed = true;
+      } else if (h.ticker && /^\d{6}$/.test(h.ticker) && !h.currency) {
+        h.currency = 'KRW';
+      }
+    });
+  });
+  if (changed) { saveDB(DB); console.log('[migrate] USD holdings converted to dollar prices'); }
+}
+migrateUSDHoldings(); // 기존 원화 저장 USD 종목 → 달러 단가로 1회 변환
 function allH() {
   return DB.accounts.flatMap(a => a.holdings.map(h => ({
     ...h, owner:a.owner, broker:a.broker, acctType:a.type,
@@ -265,11 +310,15 @@ function renderAcctList() {
       a.holdings.forEach(h2 => {
         const hv = hval(h2);
         const ret = h2.avgPrice>0 && h2.ticker!=='CASH' ? (h2.curPrice-h2.avgPrice)/h2.avgPrice*100 : null;
+        const usd = isUSD(h2);
+        const priceSubLabel = usd
+          ? `$${Number(h2.curPrice).toFixed(2)} · ${h2.qty.toLocaleString()}주`
+          : h2.category + ' · ' + h2.qty.toLocaleString() + '주';
         d += `<div class="drag-item" data-id="${h2.id}" data-acct="${a.id}" data-type="holding" style="display:flex;align-items:center;border-bottom:1px solid var(--border);padding:0 8px 0 0">
           <div class="drag-handle" style="padding:0 10px;color:var(--text3);font-size:16px;cursor:grab;touch-action:none;flex-shrink:0">⠿</div>
           <div onclick="showHoldingModal('${a.id}','${h2.id}')" style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;flex:1;gap:8px;cursor:pointer">
-            <div style="flex:1;min-width:0"><div class="tbl-nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h2.name}</div><div class="tbl-sub">${h2.category} · ${h2.qty.toLocaleString()}주</div></div>
-            <div class="tbl-val" style="flex-shrink:0">${fmtW(hv)}</div>
+            <div style="flex:1;min-width:0"><div class="tbl-nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h2.name}</div><div class="tbl-sub">${priceSubLabel}</div></div>
+            <div class="tbl-val" style="flex-shrink:0">${fmtHVal(h2)}</div>
             <div class="tbl-pct ${ret!==null ? pctCls(ret) : 'neu'}" style="flex-shrink:0;min-width:44px;text-align:right">${ret!==null ? fmtPct(ret) : ''}</div>
           </div>
         </div>`;
@@ -937,20 +986,67 @@ function showAddStockModal(aid) {
   openModal(`<div class="modal-handle"></div><div class="modal-title">주식 / ETF 추가</div>
     <div class="fg2">
       <div class="form-row"><div class="form-lbl">종목명</div><input class="fi" id="m-hname" placeholder="예: QLD"></div>
-      <div class="form-row"><div class="form-lbl">티커 / 관리코드</div><input class="fi" id="m-ticker" placeholder="예: QLD, 069500"></div>
+      <div class="form-row"><div class="form-lbl">티커 / 관리코드</div><input class="fi" id="m-ticker" placeholder="예: QLD, 069500" oninput="onTickerInput(this.value)"></div>
     </div>
     <div style="margin-bottom:10px">
       <button class="btn-sm" onclick="showETFSearchForHolding()">🔍 해외 ETF 현재가 조회</button>
     </div>
     <div class="form-row"><div class="form-lbl">카테고리</div>
       <select class="fsel" id="m-cat"><option>미국주식</option><option>레버리지</option><option>신흥국</option><option>채권</option><option>국내주식</option><option>기타</option></select></div>
+    <div class="form-row" style="margin-bottom:6px">
+      <div class="form-lbl">통화</div>
+      <div style="display:flex;gap:6px">
+        <button id="cur-btn-usd" class="btn-sm" style="flex:1;padding:8px;background:var(--accent);color:#000" onclick="setCurrency('USD')">$ 달러</button>
+        <button id="cur-btn-krw" class="btn-sm" style="flex:1;padding:8px" onclick="setCurrency('KRW')">₩ 원화</button>
+      </div>
+    </div>
+    <div id="m-currency-hidden" data-val="USD"></div>
     <div class="fg2">
       <div class="form-row"><div class="form-lbl">보유 수량</div><input class="fi" id="m-qty" type="number" placeholder="0"></div>
-      <div class="form-row"><div class="form-lbl">평균 단가</div><input class="fi" id="m-avg" type="number" placeholder="0"></div>
+      <div class="form-row"><div class="form-lbl" id="m-avg-lbl">평균 단가 ($)</div><input class="fi" id="m-avg" type="number" placeholder="0" step="0.01"></div>
     </div>
-    <div class="form-row"><div class="form-lbl">현재가</div><input class="fi" id="m-cur" type="number" placeholder="0"></div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <div class="form-row" style="flex:1;margin-bottom:0"><div class="form-lbl" id="m-cur-lbl">현재가 ($)</div><input class="fi" id="m-cur" type="number" placeholder="0" step="0.01"></div>
+    </div>
+    <div id="m-krw-hint" style="font-size:10px;color:var(--text3);margin:-4px 0 10px;display:none"></div>
     <button class="btn btn-p" style="margin-top:4px" onclick="addHolding('${aid}')">추가</button>
     <button class="btn btn-s" style="margin-top:8px" onclick="closeModal()">취소</button>`);
+}
+
+function onTickerInput(val) {
+  // 티커 입력 시 통화 자동 설정
+  if (/^[A-Za-z]+$/.test(val.trim()) && val.trim()) setCurrency('USD');
+  else if (/^\d{6}$/.test(val.trim())) setCurrency('KRW');
+}
+
+function setCurrency(cur) {
+  const el = document.getElementById('m-currency-hidden');
+  if (el) el.dataset.val = cur;
+  const usdBtn = document.getElementById('cur-btn-usd');
+  const krwBtn = document.getElementById('cur-btn-krw');
+  const avgLbl = document.getElementById('m-avg-lbl');
+  const curLbl = document.getElementById('m-cur-lbl');
+  const avgInput = document.getElementById('m-avg');
+  const curInput = document.getElementById('m-cur');
+  const hint = document.getElementById('m-krw-hint');
+  if (!usdBtn) return;
+  if (cur === 'USD') {
+    usdBtn.style.background = 'var(--accent)'; usdBtn.style.color = '#000';
+    krwBtn.style.background = ''; krwBtn.style.color = '';
+    if (avgLbl) avgLbl.textContent = '평균 단가 ($)';
+    if (curLbl) curLbl.textContent = '현재가 ($)';
+    if (avgInput) avgInput.step = '0.01';
+    if (curInput) curInput.step = '0.01';
+    if (hint) hint.style.display = 'none';
+  } else {
+    krwBtn.style.background = 'var(--accent)'; krwBtn.style.color = '#000';
+    usdBtn.style.background = ''; usdBtn.style.color = '';
+    if (avgLbl) avgLbl.textContent = '평균 단가 (원)';
+    if (curLbl) curLbl.textContent = '현재가 (원)';
+    if (avgInput) avgInput.step = '1';
+    if (curInput) curInput.step = '1';
+    if (hint) { hint.textContent = '※ 원화 입력 시 그대로 저장됩니다'; hint.style.display = 'block'; }
+  }
 }
 async function showETFSearchForHolding() {
   const ticker = document.getElementById('m-ticker').value.trim().toUpperCase();
@@ -958,16 +1054,35 @@ async function showETFSearchForHolding() {
   toast('조회 중...');
   const result = await fetchETFPrice(ticker);
   if (!result || !result.price) { toast('조회 실패. 직접 입력해 주세요'); return; }
-  const krwPrice = result.currency==='USD' ? Math.round(result.price * 1484) : Math.round(result.price);
-  document.getElementById('m-hname').value = result.name || ticker;
-  document.getElementById('m-cur').value = krwPrice;
-  toast('✓ ' + fmtW(krwPrice) + ' 적용됨');
+  const curEl = document.getElementById('m-currency-hidden');
+  const isCurUSD = (curEl?.dataset.val === 'USD') || (!curEl && /^[A-Za-z]+$/.test(ticker));
+  if (isCurUSD && result.currency === 'USD') {
+    document.getElementById('m-hname').value = result.name || ticker;
+    document.getElementById('m-cur').value = result.price.toFixed(2);
+    toast('✓ $' + result.price.toFixed(2) + ' 적용됨');
+  } else {
+    const krwPrice = result.currency==='USD' ? Math.round(result.price * USD_KRW) : Math.round(result.price);
+    document.getElementById('m-hname').value = result.name || ticker;
+    document.getElementById('m-cur').value = krwPrice;
+    toast('✓ ' + fmtW(krwPrice) + ' 적용됨');
+  }
 }
 function addHolding(aid) {
   const a=DB.accounts.find(a=>a.id===aid); if(!a)return;
   const n=document.getElementById('m-hname').value;
   if (!n) { toast('종목명 입력'); return; }
-  a.holdings.push({id:'h'+Date.now(),name:n,ticker:document.getElementById('m-ticker').value||n,category:document.getElementById('m-cat').value,qty:parseFloat(document.getElementById('m-qty').value)||0,avgPrice:parseFloat(document.getElementById('m-avg').value)||0,curPrice:parseFloat(document.getElementById('m-cur').value)||0});
+  const ticker = document.getElementById('m-ticker').value || n;
+  const curEl = document.getElementById('m-currency-hidden');
+  // currency: 명시적 선택 > 티커 자동 판별
+  let currency = curEl?.dataset.val || (/^[A-Za-z]+$/.test(ticker) ? 'USD' : 'KRW');
+  a.holdings.push({
+    id:'h'+Date.now(), name:n, ticker,
+    category:document.getElementById('m-cat').value,
+    currency,
+    qty:parseFloat(document.getElementById('m-qty').value)||0,
+    avgPrice:parseFloat(document.getElementById('m-avg').value)||0,
+    curPrice:parseFloat(document.getElementById('m-cur').value)||0
+  });
   saveDB(DB); closeModal(); renderDashboard(); toast('✓ 종목 추가');
 }
 function showHoldingModal(aid, hid) {
@@ -991,20 +1106,36 @@ function showHoldingModal(aid, hid) {
     return;
   }
 
+  const usd = isUSD(h);
+  const cur = usd ? 'USD' : 'KRW';
+  const priceLbl = usd ? '평균 단가 ($)' : '평균 단가 (원)';
+  const curPriceLbl = usd ? '현재가 ($)' : '현재가 (원)';
+  const usdActive = usd ? 'background:var(--accent);color:#000' : '';
+  const krwActive = !usd ? 'background:var(--accent);color:#000' : '';
+
   openModal(`<div class="modal-handle"></div><div class="modal-title">${h.name} 수정</div>
     <div class="fg2">
       <div class="form-row"><div class="form-lbl">종목명</div><input class="fi" id="m-hname" value="${h.name}"></div>
       <div class="form-row"><div class="form-lbl">티커 / 관리코드</div><input class="fi" id="m-ticker" value="${h.ticker}" placeholder="예: QLD, 069500"></div>
     </div>
     <div style="font-size:10px;color:var(--text3);margin:-6px 0 10px">국내 ETF는 6자리 코드 (예: 069500), 해외는 티커 (예: QLD)</div>
+    <div class="form-row" style="margin-bottom:6px">
+      <div class="form-lbl">통화</div>
+      <div style="display:flex;gap:6px">
+        <button id="cur-btn-usd" class="btn-sm" style="flex:1;padding:8px;${usdActive}" onclick="setCurrency('USD')">$ 달러</button>
+        <button id="cur-btn-krw" class="btn-sm" style="flex:1;padding:8px;${krwActive}" onclick="setCurrency('KRW')">₩ 원화</button>
+      </div>
+    </div>
+    <div id="m-currency-hidden" data-val="${cur}"></div>
     <div class="fg2">
       <div class="form-row"><div class="form-lbl">수량</div><input class="fi" id="m-qty" type="number" value="${h.qty}"></div>
-      <div class="form-row"><div class="form-lbl">평균 단가</div><input class="fi" id="m-avg" type="number" value="${h.avgPrice}"></div>
+      <div class="form-row"><div class="form-lbl" id="m-avg-lbl">${priceLbl}</div><input class="fi" id="m-avg" type="number" value="${h.avgPrice}" step="${usd?'0.01':'1'}"></div>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
-      <div class="form-row" style="flex:1;margin-bottom:0"><div class="form-lbl">현재가 ← 업데이트</div><input class="fi" id="m-cur" type="number" value="${h.curPrice}"></div>
+    <div style="display:flex;gap:6px;margin-bottom:4px">
+      <div class="form-row" style="flex:1;margin-bottom:0"><div class="form-lbl" id="m-cur-lbl">${curPriceLbl}</div><input class="fi" id="m-cur" type="number" value="${h.curPrice}" step="${usd?'0.01':'1'}"></div>
       <button class="btn-sm" style="margin-top:14px;white-space:nowrap" onclick="fetchAndFillPrice('${h.ticker}')">🔍 조회</button>
     </div>
+    <div id="m-krw-hint" style="font-size:10px;color:var(--text3);margin:2px 0 10px;display:none"></div>
     <div class="form-row"><div class="form-lbl">카테고리</div>
       <select class="fsel" id="m-cat">${['미국주식','레버리지','신흥국','현금','채권','국내주식','기타'].map(c=>`<option${c===h.category?' selected':''}>${c}</option>`).join('')}</select></div>
     <button class="btn btn-p" style="margin-top:4px" onclick="editHolding('${aid}','${hid}')">저장</button>
@@ -1016,9 +1147,18 @@ async function fetchAndFillPrice(ticker) {
   toast('조회 중...');
   const result = await fetchETFPrice(ticker);
   if (!result || !result.price) { toast('조회 실패. 직접 입력해 주세요'); return; }
-  const krwPrice = result.currency==='USD' ? Math.round(result.price * 1484) : Math.round(result.price);
-  document.getElementById('m-cur').value = krwPrice;
-  toast('✓ ' + fmtW(krwPrice) + ' 적용됨');
+  const curEl = document.getElementById('m-currency-hidden');
+  const isCurUSD = curEl?.dataset.val === 'USD';
+  if (isCurUSD && result.currency === 'USD') {
+    // 달러 모드: 달러 그대로
+    document.getElementById('m-cur').value = result.price.toFixed(2);
+    toast('✓ $' + result.price.toFixed(2) + ' 적용됨');
+  } else {
+    // 원화 모드: 환산
+    const krwPrice = result.currency==='USD' ? Math.round(result.price * USD_KRW) : Math.round(result.price);
+    document.getElementById('m-cur').value = krwPrice;
+    toast('✓ ' + fmtW(krwPrice) + ' 적용됨');
+  }
 }
 
 function editCash(aid, hid) {
@@ -1036,6 +1176,8 @@ function editHolding(aid, hid) {
   const a=DB.accounts.find(a=>a.id===aid); const h=a?.holdings.find(h=>h.id===hid); if(!h)return;
   const newName = document.getElementById('m-hname')?.value; if(newName) h.name = newName;
   const newTicker = document.getElementById('m-ticker')?.value?.trim(); if(newTicker) h.ticker = newTicker;
+  const curEl = document.getElementById('m-currency-hidden');
+  if (curEl?.dataset.val) h.currency = curEl.dataset.val;
   h.qty=parseFloat(document.getElementById('m-qty').value)||0;
   h.avgPrice=parseFloat(document.getElementById('m-avg').value)||0;
   h.curPrice=parseFloat(document.getElementById('m-cur').value)||0;
@@ -1324,7 +1466,13 @@ async function importPricesFromSheet() {
       a.holdings.forEach(h => {
         if (h.ticker && h.ticker !== 'CASH') {
           if (priceMap[h.ticker]) {
-            h.curPrice = priceMap[h.ticker];
+            const sheetPrice = priceMap[h.ticker]; // 시트에서는 항상 원화
+            if (isUSD(h)) {
+              // USD 종목: 원화 → 달러 역산해서 저장
+              h.curPrice = Math.round(sheetPrice / USD_KRW * 100) / 100;
+            } else {
+              h.curPrice = sheetPrice;
+            }
             updated++;
           } else {
             skipped++;
